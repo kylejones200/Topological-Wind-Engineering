@@ -1,10 +1,21 @@
 """
-Code extracted from 36_regime_transitions_zigzag_blog.md
+Code extracted from 36_regime_transitions_zigzag_blog.md.
+Run from repo root: python path/to/36_regime_transitions_zigzag_blog_code.py [--config path/to/config.yaml]
 """
-'\nRegime Transition Prediction Using Zigzag Persistence\nPredicts wind turbine regime changes 10-15 minutes ahead using topological precursors\n'
+import sys
+import os
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 import requests
 from io import StringIO
 from sklearn.preprocessing import StandardScaler
@@ -17,38 +28,55 @@ from ripser import ripser
 from scipy.spatial.distance import directed_hausdorff
 import warnings
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-warnings.filterwarnings('ignore')
-NREL_API_KEY = 'wpaaOciW3kYdcNMvRogmZEfdEueR52NS7g7Dxv0z'
-NREL_API_URL = 'https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv'
 
-def fetch_nrel_wind_data(lat=41.5, lon=-93.5, years=[2017]):
-    """Fetch wind data from NREL."""
+from config.load import load_config
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+warnings.filterwarnings("ignore")
+
+
+def fetch_nrel_wind_data(cfg=None, lat=41.5, lon=-93.5, years=None):
+    """Fetch wind data from NREL. If cfg is provided, uses nrel section."""
+    if cfg is not None:
+        nrel = cfg.get("nrel", {})
+        lat = nrel.get("lat", 41.5)
+        lon = nrel.get("lon", -93.5)
+        years = nrel.get("years", [2017])
+        api_key = nrel.get("api_key") or os.environ.get("NREL_API_KEY", "")
+        base_url = nrel.get("base_url", "https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv")
+        timeout = nrel.get("request_timeout_seconds", 120)
+        email = nrel.get("email", "user@example.com")
+    else:
+        years = years or [2017]
+        api_key = os.environ.get("NREL_API_KEY", "")
+        base_url = "https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv"
+        timeout = 120
+        email = "kyletjones@gmail.com"
     all_data = []
     for year in years:
-        logger.info(f'   Fetching year {year}...')
-        params = {'api_key': NREL_API_KEY, 'wkt': f'POINT({lon} {lat})', 'attributes': 'windspeed_100m,temperature_100m', 'names': str(year), 'utc': 'true', 'leap_day': 'false', 'interval': '60', 'email': 'kyletjones@gmail.com'}
+        logger.info(f"   Fetching year {year}...")
+        params = {"api_key": api_key, "wkt": f"POINT({lon} {lat})", "attributes": "windspeed_100m,temperature_100m", "names": str(year), "utc": "true", "leap_day": "false", "interval": "60", "email": email}
         try:
-            response = requests.get(NREL_API_URL, params=params, timeout=120)
+            response = requests.get(base_url, params=params, timeout=timeout)
             response.raise_for_status()
-            lines = response.text.strip().split('\n')
+            lines = response.text.strip().split("\n")
             data_start = 0
             for i, line in enumerate(lines):
-                if line.startswith('Year,'):
+                if line.startswith("Year,"):
                     data_start = i + 1
                     break
-            data_text = '\n'.join(lines[data_start:])
-            df_year = pd.read_csv(StringIO(data_text), header=None, names=['Year', 'Month', 'Day', 'Hour', 'Minute', 'windspeed_100m', 'temperature_100m'])
-            df_year['time'] = pd.to_datetime(df_year[['Year', 'Month', 'Day', 'Hour', 'Minute']])
-            all_years.append(df_year)
-            logger.info(f'     ✓ Fetched {len(df_year):,} records')
+            data_text = "\n".join(lines[data_start:])
+            df_year = pd.read_csv(StringIO(data_text), header=None, names=["Year", "Month", "Day", "Hour", "Minute", "windspeed_100m", "temperature_100m"])
+            df_year["time"] = pd.to_datetime(df_year[["Year", "Month", "Day", "Hour", "Minute"]])
+            all_data.append(df_year)
+            logger.info(f"     ✓ Fetched {len(df_year):,} records")
         except Exception as e:
-            logger.error(f'     ✗ Error: {e}')
+            logger.error(f"     ✗ Error: {e}")
             continue
-    if not all_years:
+    if not all_data:
         return None
-    return pd.concat(all_years, ignore_index=True).sort_values('time')
+    return pd.concat(all_data, ignore_index=True).sort_values("time")
 
 def simulate_turbine_operation(wind_df, rated_power=2000):
     """
@@ -323,19 +351,17 @@ def generate_visualizations(X, y, y_pred, y_prob, feature_importance, feature_na
     plt.close()
     logger.info(f'\nVisualizations saved to {out_dir}/')
 
-def main():
-    """
-    Main.
-
-    Returns:
-        Description of return value.
-    """
-    np.random.seed(42)
-    logger.info('=' * 70)
-    logger.info('Regime Transition Prediction Using Zigzag Persistence')
-    logger.info('=' * 70)
-    logger.info('\n1. Fetching NREL wind data...')
-    wind_data = fetch_nrel_wind_data(lat=41.5, lon=-93.5, years=[2017, 2018, 2019])
+def main(config_path=None):
+    """Main entry: load config and run pipeline."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    rt = cfg.get("regime_transition", {})
+    np.random.seed(seed)
+    logger.info("=" * 70)
+    logger.info("Regime Transition Prediction Using Zigzag Persistence")
+    logger.info("=" * 70)
+    logger.info("\n1. Fetching NREL wind data...")
+    wind_data = fetch_nrel_wind_data(cfg)
     if wind_data is None:
         logger.error('Failed to fetch data')
         return
@@ -369,7 +395,7 @@ def main():
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     logger.info('\n6. Training classifiers...')
-    models = {'Random Forest': RandomForestClassifier(n_estimators=100, max_depth=12, random_state=42), 'Gradient Boosting': GradientBoostingClassifier(n_estimators=100, max_depth=5, random_state=42), 'SVM-RBF': SVC(kernel='rbf', probability=True, random_state=42), 'Logistic Regression': LogisticRegression(max_iter=1000, random_state=42)}
+    models = {"Random Forest": RandomForestClassifier(n_estimators=100, max_depth=12, random_state=seed), "Gradient Boosting": GradientBoostingClassifier(n_estimators=100, max_depth=5, random_state=seed), "SVM-RBF": SVC(kernel="rbf", probability=True, random_state=seed), "Logistic Regression": LogisticRegression(max_iter=1000, random_state=seed)}
     results = {}
     for name, model in models.items():
         logger.info(f'\n   Training {name}...')
@@ -403,5 +429,9 @@ def main():
     logger.info(f'  - Spiking bottleneck distances (reorganization)')
     logger.info(f'  - Rising H1 counts (state space expansion)')
     logger.info('=' * 70)
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Regime transitions zigzag persistence")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)

@@ -1,10 +1,22 @@
 """
 Yaw Misalignment Detection Using Mapper
-Detects misalignment from operational patterns without wind direction sensors
+Detects misalignment from operational patterns without wind direction sensors.
+Run from repo root: python path/to/yaw_mapper.py [--config path/to/config.yaml]
 """
+import sys
+import os
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 import requests
 from io import StringIO
 from sklearn.preprocessing import StandardScaler
@@ -15,20 +27,41 @@ import matplotlib.pyplot as plt
 from scipy.spatial import distance_matrix
 import warnings
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-warnings.filterwarnings('ignore')
-NREL_API_KEY = 'wpaaOciW3kYdcNMvRogmZEfdEueR52NS7g7Dxv0z'
-NREL_API_URL = 'https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv'
 
-def fetch_nrel_wind_data(lat=41.5, lon=-93.5, years=[2017]):
-    """Fetch wind data from NREL."""
+from config.load import load_config
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+warnings.filterwarnings("ignore")
+
+
+def fetch_nrel_wind_data(cfg):
+    """Fetch wind data from NREL. Uses config for lat, lon, years, api_key, url, timeout."""
+    nrel = cfg.get("nrel", {})
+    lat = nrel.get("lat", 41.5)
+    lon = nrel.get("lon", -93.5)
+    years = nrel.get("years", [2017])
+    api_key = nrel.get("api_key") or os.environ.get("NREL_API_KEY", "")
+    base_url = nrel.get("base_url", "https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv")
+    timeout = nrel.get("request_timeout_seconds", 120)
+    email = nrel.get("email", "user@example.com")
+    interval = nrel.get("interval", "60")
+    attributes = nrel.get("attributes", "windspeed_100m,winddirection_100m,temperature_100m")
     all_data = []
     for year in years:
-        logger.info(f'   Fetching year {year}...')
-        params = {'api_key': NREL_API_KEY, 'wkt': f'POINT({lon} {lat})', 'attributes': 'windspeed_100m,winddirection_100m,temperature_100m', 'names': str(year), 'utc': 'true', 'leap_day': 'false', 'interval': '60', 'email': 'kyletjones@gmail.com'}
+        logger.info(f"   Fetching year {year}...")
+        params = {
+            "api_key": api_key,
+            "wkt": f"POINT({lon} {lat})",
+            "attributes": attributes,
+            "names": str(year),
+            "utc": "true",
+            "leap_day": "false",
+            "interval": interval,
+            "email": email,
+        }
         try:
-            response = requests.get(NREL_API_URL, params=params, timeout=120)
+            response = requests.get(base_url, params=params, timeout=timeout)
             response.raise_for_status()
             lines = response.text.strip().split('\n')
             data_start = 0
@@ -48,7 +81,7 @@ def fetch_nrel_wind_data(lat=41.5, lon=-93.5, years=[2017]):
         return None
     return pd.concat(all_data, ignore_index=True).sort_values('time')
 
-def simulate_turbine_with_misalignment(wind_df, rated_power=2000):
+def simulate_turbine_with_misalignment(wind_df, cfg):
     """
     Simulate turbine with periodic yaw misalignment.
     
@@ -56,15 +89,24 @@ def simulate_turbine_with_misalignment(wind_df, rated_power=2000):
     - Power reduction by cos(angle)
     - Increased variability from asymmetric loading
     """
+    yaw_cfg = cfg.get("yaw_mapper", {})
+    sim = cfg.get("simulation", {})
+    rated_power = sim.get("rated_power_kw", 2000)
+    prob = yaw_cfg.get("misalignment_prob", 0.05)
+    dur_min = yaw_cfg.get("misalignment_duration_min", 2)
+    dur_max = yaw_cfg.get("misalignment_duration_max", 24)
+    angle_mean = yaw_cfg.get("misalignment_angle_mean", 10)
+    angle_std = yaw_cfg.get("misalignment_angle_std", 5)
+    angle_max = yaw_cfg.get("misalignment_angle_max", 25)
     df = wind_df.copy()
     n = len(df)
     yaw_misalignment = np.zeros(n)
     i = 0
     while i < n:
-        if np.random.random() < 0.05:
-            duration = np.random.randint(2, 24)
-            angle = np.abs(np.random.normal(10, 5))
-            angle = np.clip(angle, 0, 25)
+        if np.random.random() < prob:
+            duration = np.random.randint(dur_min, dur_max)
+            angle = np.abs(np.random.normal(angle_mean, angle_std))
+            angle = np.clip(angle, 0, angle_max)
             for j in range(i, min(i + duration, n)):
                 yaw_misalignment[j] = angle
             i += duration
@@ -89,8 +131,10 @@ def simulate_turbine_with_misalignment(wind_df, rated_power=2000):
             target_power = rated_power
             target_rpm = 55 + (w_eff - 12) * 0.2
         variability_factor = 1 + np.abs(misalign) * 0.02
-        rotor_speed[i] = 0.85 * rotor_speed[i - 1] + 0.15 * target_rpm
-        power[i] = 0.75 * power[i - 1] + 0.25 * target_power
+        rot_inertia = yaw_cfg.get("rotor_inertia", 0.85)
+        power_inertia = yaw_cfg.get("power_inertia", 0.75)
+        rotor_speed[i] = rot_inertia * rotor_speed[i - 1] + (1 - rot_inertia) * target_rpm
+        power[i] = power_inertia * power[i - 1] + (1 - power_inertia) * target_power
         rotor_speed[i] += np.random.randn() * 0.3 * variability_factor
         power[i] += np.random.randn() * 10 * variability_factor
         rotor_speed[i] = np.maximum(rotor_speed[i], 0)
@@ -112,13 +156,14 @@ def compute_expected_power(wind_speed, rated_power=2000):
             expected[i] = rated_power
     return expected
 
-def create_windows_with_filters(df, window_size=10):
+def create_windows_with_filters(df, cfg):
     """
     Create windows and compute filter values.
     
     Filter 1: Power ratio (actual / expected)
     Filter 2: Rotor speed variability (std)
     """
+    window_size = cfg.get("yaw_mapper", {}).get("window_size", 10)
     windows = []
     n = len(df)
     for start in range(0, n - window_size + 1, window_size):
@@ -254,34 +299,35 @@ def visualize_mapper_graph(G, y_labels, out_dir):
     plt.savefig(out_dir / 'mapper_graph.png', dpi=300, bbox_inches='tight')
     plt.close()
 
-def main():
-    """
-    Main.
+def main(config_path=None):
+    """Main entry: load config and run pipeline. All parameters from config."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    yaw_cfg = cfg.get("yaw_mapper", {})
 
-    Returns:
-        Description of return value.
-    """
-    np.random.seed(42)
-    logger.info('=' * 70)
-    logger.info('Yaw Misalignment Detection Using Mapper')
-    logger.info('=' * 70)
-    logger.info('\n1. Fetching NREL wind data...')
-    wind_data = fetch_nrel_wind_data(lat=41.5, lon=-93.5, years=[2017, 2018])
+    logger.info("=" * 70)
+    logger.info("Yaw Misalignment Detection Using Mapper")
+    logger.info("=" * 70)
+    logger.info("\n1. Fetching NREL wind data...")
+    wind_data = fetch_nrel_wind_data(cfg)
     if wind_data is None:
-        logger.error('Failed to fetch data')
+        logger.error("Failed to fetch data")
         return
-    logger.info(f'   Total records: {len(wind_data):,}')
-    logger.info('\n2. Simulating turbine with yaw misalignment...')
-    df = simulate_turbine_with_misalignment(wind_data)
-    misalign_pct = (df['yaw_misalignment'].abs() > 10).sum() / len(df) * 100
-    logger.info(f'   Misalignment (>10°): {misalign_pct:.1f}% of time')
-    logger.info('\n3. Creating windows and computing filters...')
-    windows_df = create_windows_with_filters(df, window_size=10)
+    logger.info(f"   Total records: {len(wind_data):,}")
+    logger.info("\n2. Simulating turbine with yaw misalignment...")
+    df = simulate_turbine_with_misalignment(wind_data, cfg)
+    angle_thresh = yaw_cfg.get("misalignment_angle_mean", 10)
+    misalign_pct = (df["yaw_misalignment"].abs() > angle_thresh).sum() / len(df) * 100
+    logger.info(f"   Misalignment (>{angle_thresh}°): {misalign_pct:.1f}% of time")
+    logger.info("\n3. Creating windows and computing filters...")
+    windows_df = create_windows_with_filters(df, cfg)
     logger.info(f'   Total windows: {len(windows_df)}')
     logger.info(f"   Aligned: {(windows_df['label'] == 0).sum()}")
     logger.info(f"   Misaligned: {(windows_df['label'] == 1).sum()}")
-    logger.info('\n4. Splitting data...')
-    split_idx = int(0.7 * len(windows_df))
+    logger.info("\n4. Splitting data...")
+    train_ratio = yaw_cfg.get("train_ratio", 0.7)
+    split_idx = int(train_ratio * len(windows_df))
     train_df = windows_df.iloc[:split_idx]
     test_df = windows_df.iloc[split_idx:]
     X_train = train_df[['filter1', 'filter2']].values
@@ -290,18 +336,24 @@ def main():
     y_test = test_df['label'].values
     logger.info(f'   Train: {len(X_train)} windows')
     logger.info(f'   Test: {len(X_test)} windows')
-    logger.info('\n5. Building Mapper graph...')
-    G = build_mapper_graph(X_train, train_df['filter1'].values, train_df['filter2'].values, n_bins=8, overlap=0.5, n_clusters=2)
+    logger.info("\n5. Building Mapper graph...")
+    n_bins = yaw_cfg.get("n_bins", 10)
+    overlap = yaw_cfg.get("overlap", 0.5)
+    n_clusters = yaw_cfg.get("n_clusters", 2)
+    G = build_mapper_graph(X_train, train_df["filter1"].values, train_df["filter2"].values, n_bins=n_bins, overlap=overlap, n_clusters=n_clusters)
     logger.info(f'   Nodes: {G.number_of_nodes()}')
     logger.info(f'   Edges: {G.number_of_edges()}')
     logger.info(f'   Connected components: {nx.number_connected_components(G)}')
     logger.info('\n6. Classifying test set...')
-    y_pred = classify_with_mapper(G, X_train, y_train, X_test, test_df['filter1'].values, test_df['filter2'].values)
+    y_pred = classify_with_mapper(G, X_train, y_train, X_test, test_df["filter1"].values, test_df["filter2"].values, n_bins=n_bins)
     acc = accuracy_score(y_test, y_pred)
     logger.info(f'\n   Accuracy: {acc * 100:.2f}%')
     logger.info(f"\n{classification_report(y_test, y_pred, target_names=['Aligned', 'Misaligned'])}")
-    logger.info('\n7. Generating visualizations...')
-    visualize_mapper_graph(G, y_train, 'figures_yaw')
+    logger.info("\n7. Generating visualizations...")
+    figures_subdir = yaw_cfg.get("figures_subdir", "figures_yaw")
+    out_dir = _SCRIPT_DIR / figures_subdir
+    out_dir.mkdir(exist_ok=True, parents=True)
+    visualize_mapper_graph(G, y_train, str(out_dir))
     fig, ax = plt.subplots(figsize=(10, 8))
     aligned_mask = y_test == 0
     misaligned_mask = y_test == 1
@@ -314,9 +366,9 @@ def main():
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     plt.tight_layout()
-    plt.savefig('figures_yaw/filter_space.png', dpi=300, bbox_inches='tight')
+    plt.savefig(out_dir / "filter_space.png", dpi=300, bbox_inches="tight")
     plt.close()
-    logger.info('   Saved visualizations to figures_yaw/')
+    logger.info(f"   Saved visualizations to {out_dir}/")
     logger.info('\n' + '=' * 70)
     logger.info('YAW MISALIGNMENT DETECTION COMPLETE')
     logger.info('=' * 70)
@@ -327,5 +379,9 @@ def main():
     logger.info(f'  - Temporal degradation trajectories')
     logger.info(f'  - Misalignment mechanism signatures')
     logger.info('=' * 70)
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Yaw misalignment detection using Mapper")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)

@@ -1,20 +1,28 @@
 """
-Create animation for Article 35: Wake Effect Detection
-
-Shows:
-- Power output of turbines in/out of wake
-- Wake detection over time
-- Persistence features
+Create wake detection animation. Run from repo root: python path/to/35_create_animation.py [--config path/to/config.yaml]
 """
+import sys
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from matplotlib.gridspec import GridSpec
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+from config.load import load_config
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-np.random.seed(42)
 FPS = 10
 DURATION_SECONDS = 10
 N_FRAMES = FPS * DURATION_SECONDS
@@ -83,10 +91,25 @@ def update(frame):
     ax3.axis('off')
     ax3.set_title('Detection Status', fontsize=11, fontweight='normal')
     return []
-logger.info('Creating animation for Article 35: Wake Detection...')
-anim = animation.FuncAnimation(fig, update, frames=N_FRAMES, interval=1000 / FPS, blit=True, repeat=True)
-output_file = '35_wake_detection_animation.gif'
-logger.info(f'Saving to {output_file}...')
-anim.save(output_file, writer='pillow', fps=FPS, dpi=100)
-logger.info(f'✓ Animation saved: {output_file}')
-plt.close()
+def main(config_path=None):
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    wd = cfg.get("wake_detection", {})
+    figures_subdir = wd.get("figures_subdir", "figures")
+    out_dir = _SCRIPT_DIR / figures_subdir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    output_file = out_dir / "35_wake_detection_animation.gif"
+    logger.info("Creating wake detection animation...")
+    anim = animation.FuncAnimation(fig, update, frames=N_FRAMES, interval=1000 / FPS, blit=True, repeat=True)
+    anim.save(str(output_file), writer="pillow", fps=FPS, dpi=100)
+    logger.info(f"✓ Animation saved: {output_file}")
+    plt.close()
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Create wake detection animation")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)

@@ -4,14 +4,26 @@ Wake Detection Using Persistent Homology (Improved & Optimized)
 Detects when turbines operate in wake vs free-stream conditions using
 topological features from power-windspeed phase space.
 
+Run from repo root: python path/to/turbine_wake_detection.py [--config path/to/config.yaml]
 """
 from typing import List, Tuple, Dict
 import sys
 from pathlib import Path
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Bootstrap: find repo root and load config
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_SCRIPT_DIR.parent))  # tda_utils
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -22,10 +34,23 @@ from sklearn.svm import SVC
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, roc_auc_score, f1_score
 import warnings
-from tda_utils import TurbineConfig, TufteColors, setup_tufte_plot, compute_power_curve_vectorized, add_power_noise, extract_datetime_features, create_seasonal_pattern, create_diurnal_pattern, extract_persistence_lifetimes, compute_persistence_entropy, print_classification_summary
-np.random.seed(42)
+from config.load import load_config
+from tda_utils import (
+    TurbineConfig,
+    TufteColors,
+    setup_tufte_plot,
+    compute_power_curve_vectorized,
+    add_power_noise,
+    extract_datetime_features,
+    create_seasonal_pattern,
+    create_diurnal_pattern,
+    extract_persistence_lifetimes,
+    compute_persistence_entropy,
+    print_classification_summary,
+)
 
-def fetch_nrel_wind_data(lat: float=41.5, lon: float=-100.5, years: List[int]=[2010, 2011, 2012]) -> pd.DataFrame:
+
+def fetch_nrel_wind_data(cfg: dict) -> pd.DataFrame:
     """
     Simulate NREL Wind Toolkit data fetch.
     
@@ -37,15 +62,23 @@ def fetch_nrel_wind_data(lat: float=41.5, lon: float=-100.5, years: List[int]=[2
     Returns:
         DataFrame with timestamp, windspeed_80m, wind_direction, temperature
     """
-    logger.info(f'Simulating NREL wind data fetch for location ({lat}, {lon})')
+    nrel = cfg.get("nrel", {})
+    wake_cfg = cfg.get("wake_detection", {})
+    lat = nrel.get("lat", 41.5)
+    lon = nrel.get("lon", -100.5)
+    years = nrel.get("years", [2010, 2011, 2012])
+    logger.info(f"Simulating NREL wind data fetch for location ({lat}, {lon})")
     n_records = 365 * 24 * 12 * len(years)
-    timestamps = pd.date_range(start=f'{years[0]}-01-01', periods=n_records, freq='5min')
+    timestamps = pd.date_range(start=f"{years[0]}-01-01", periods=n_records, freq="5min")
     time_features = extract_datetime_features(timestamps)
-    hours = time_features['hour_fractional']
-    days = time_features['dayofyear']
-    seasonal = create_seasonal_pattern(days, amplitude=2.0)
-    diurnal = create_diurnal_pattern(hours, amplitude=1.5)
-    windspeed_80m = 8.5 + seasonal + diurnal + np.random.normal(0, 2, n_records)
+    hours = time_features["hour_fractional"]
+    days = time_features["dayofyear"]
+    seasonal_amp = wake_cfg.get("seasonal_amplitude", 2.0)
+    diurnal_amp = wake_cfg.get("diurnal_amplitude", 1.5)
+    base_wind = wake_cfg.get("base_windspeed", 8.5)
+    seasonal = create_seasonal_pattern(days, amplitude=seasonal_amp)
+    diurnal = create_diurnal_pattern(hours, amplitude=diurnal_amp)
+    windspeed_80m = base_wind + seasonal + diurnal + np.random.normal(0, 2, n_records)
     windspeed_80m = np.clip(windspeed_80m, 0, 25)
     wind_direction = 180 + 60 * np.sin(2 * np.pi * days / 365) + np.random.normal(0, 15, n_records)
     wind_direction = wind_direction % 360
@@ -54,7 +87,12 @@ def fetch_nrel_wind_data(lat: float=41.5, lon: float=-100.5, years: List[int]=[2
     logger.info(f'Fetched {len(df):,} records spanning {len(years)} years')
     return df
 
-def simulate_turbine_power(windspeed: np.ndarray, in_wake: bool=False, config: TurbineConfig=TurbineConfig()) -> np.ndarray:
+def simulate_turbine_power(
+    windspeed: np.ndarray,
+    in_wake: bool = False,
+    config: TurbineConfig = TurbineConfig(),
+    run_cfg: dict = None,
+) -> np.ndarray:
     """
     Simulate turbine power output using IEC power curve (VECTORIZED).
     
@@ -69,17 +107,21 @@ def simulate_turbine_power(windspeed: np.ndarray, in_wake: bool=False, config: T
     Returns:
         Power output array (MW)
     """
+    wake = (run_cfg or {}).get("wake_detection", {})
+    w_min = wake.get("wake_wind_factor_min", 0.6)
+    w_max = wake.get("wake_wind_factor_max", 0.7)
+    h_alpha = wake.get("hysteresis_alpha", 0.7)
     if in_wake:
-        windspeed = windspeed * np.random.uniform(0.6, 0.7)
+        windspeed = windspeed * np.random.uniform(w_min, w_max)
     power = compute_power_curve_vectorized(windspeed, config)
     power = add_power_noise(power, noise_std=0.05, rated_power=config.rated_power)
     if in_wake:
-        alpha = 0.7
+        alpha = h_alpha
         for i in range(1, len(power)):
             power[i] = alpha * power[i] + (1 - alpha) * power[i - 1]
     return power
 
-def create_wake_scenarios(df: pd.DataFrame, n_windows: int=120, window_size: int=288) -> Tuple[List[pd.DataFrame], np.ndarray]:
+def create_wake_scenarios(df: pd.DataFrame, cfg: dict) -> Tuple[List[pd.DataFrame], np.ndarray]:
     """
     Create labeled windows of wake vs free-stream conditions.
     
@@ -91,15 +133,20 @@ def create_wake_scenarios(df: pd.DataFrame, n_windows: int=120, window_size: int
     Returns:
         Tuple of (list of window DataFrames, label array)
     """
-    logger.info(f'\nCreating {n_windows} labeled windows (wake vs free-stream)...')
+    sim = cfg.get("simulation", {})
+    n_windows = sim.get("n_windows", 120)
+    window_size = sim.get("window_size", 288)
+    logger.info(f"\nCreating {n_windows} labeled windows (wake vs free-stream)...")
     windows = []
     labels = []
     max_start = len(df) - window_size
     starts = np.random.choice(max_start, n_windows, replace=False)
     for idx, start in enumerate(starts):
-        window_df = df.iloc[start:start + window_size].copy()
+        window_df = df.iloc[start : start + window_size].copy()
         is_wake = idx < n_windows // 2
-        power = simulate_turbine_power(window_df['windspeed_80m'].values, in_wake=is_wake)
+        power = simulate_turbine_power(
+            window_df["windspeed_80m"].values, in_wake=is_wake, run_cfg=cfg
+        )
         window_df['power'] = power
         windows.append(window_df)
         labels.append(1 if is_wake else 0)
@@ -183,7 +230,9 @@ def extract_all_features(windows: List[pd.DataFrame], labels: np.ndarray) -> Tup
     logger.info(f'Label distribution: Wake={sum(y)}, Free-stream={len(y) - sum(y)}')
     return (X, y)
 
-def train_and_evaluate_models(X: pd.DataFrame, y: np.ndarray) -> Tuple[Dict, pd.DataFrame, pd.DataFrame, np.ndarray, np.ndarray]:
+def train_and_evaluate_models(
+    X: pd.DataFrame, y: np.ndarray, cfg: dict
+) -> Tuple[Dict, pd.DataFrame, pd.DataFrame, np.ndarray, np.ndarray]:
     """
     Train multiple classifiers and compare performance.
     
@@ -197,10 +246,22 @@ def train_and_evaluate_models(X: pd.DataFrame, y: np.ndarray) -> Tuple[Dict, pd.
     logger.info('\n' + '=' * 60)
     logger.info('TRAINING AND EVALUATION')
     logger.info('=' * 60)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
-    logger.info(f'\nTrain set: {len(X_train)} samples')
-    logger.info(f'Test set: {len(X_test)} samples')
-    models = {'Logistic Regression': LogisticRegression(random_state=42, max_iter=1000), 'SVM (Linear)': SVC(kernel='linear', random_state=42, probability=True), 'SVM (RBF)': SVC(kernel='rbf', random_state=42, probability=True), 'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42), 'Gradient Boosting': GradientBoostingClassifier(n_estimators=100, random_state=42)}
+    gl = cfg.get("global", {})
+    seed = gl.get("random_seed", 42)
+    test_size = cfg.get("wake_detection", {}).get("test_size", 0.3)
+    n_estimators = cfg.get("wake_detection", {}).get("n_estimators", 100)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=seed, stratify=y
+    )
+    logger.info(f"\nTrain set: {len(X_train)} samples")
+    logger.info(f"Test set: {len(X_test)} samples")
+    models = {
+        "Logistic Regression": LogisticRegression(random_state=seed, max_iter=1000),
+        "SVM (Linear)": SVC(kernel="linear", random_state=seed, probability=True),
+        "SVM (RBF)": SVC(kernel="rbf", random_state=seed, probability=True),
+        "Random Forest": RandomForestClassifier(n_estimators=n_estimators, random_state=seed),
+        "Gradient Boosting": GradientBoostingClassifier(n_estimators=n_estimators, random_state=seed),
+    }
     results = {}
     for name, model in models.items():
         logger.info(f'\n{name}:')
@@ -218,7 +279,7 @@ def train_and_evaluate_models(X: pd.DataFrame, y: np.ndarray) -> Tuple[Dict, pd.
     return (results, X_train, X_test, y_train, y_test)
 
 def generate_visualizations(windows: List[pd.DataFrame], labels: np.ndarray, X: pd.DataFrame, y: np.ndarray, results: Dict, X_test: pd.DataFrame, y_test: np.ndarray, out_dir: Path) -> None:
-"""Generate comprehensive visualizations using Tufte-style formatting."""
+    """Generate comprehensive visualizations using Tufte-style formatting."""
     logger.info('\n' + '=' * 60)
     logger.info('GENERATING VISUALIZATIONS')
     logger.info('=' * 60)
@@ -332,23 +393,41 @@ def generate_visualizations(windows: List[pd.DataFrame], labels: np.ndarray, X: 
     logger.info(f'  Saved: h1_feature_distributions.png')
     logger.info('\nAll visualizations generated successfully!')
 
-def main() -> None:
-    """Main execution function."""Main execution function."""
-    logger.info('=' * 60)
-    logger.info('WAKE DETECTION USING PERSISTENT HOMOLOGY')
-    logger.info('=' * 60)
-    df = fetch_nrel_wind_data(lat=41.5, lon=-100.5, years=[2010, 2011, 2012])
-    windows, labels = create_wake_scenarios(df, n_windows=120, window_size=288)
+def main(config_path=None):
+    """Main entry: load config and run pipeline. All parameters from config."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+
+    logger.info("=" * 60)
+    logger.info("WAKE DETECTION USING PERSISTENT HOMOLOGY")
+    logger.info("=" * 60)
+    df = fetch_nrel_wind_data(cfg)
+    windows, labels = create_wake_scenarios(df, cfg)
     X, y = extract_all_features(windows, labels)
-    results, X_train, X_test, y_train, y_test = train_and_evaluate_models(X, y)
-    out_dir = Path(__file__).parent / 'figures_wake'
+    results, X_train, X_test, y_train, y_test = train_and_evaluate_models(X, y, cfg)
+    wd_cfg = cfg.get("wake_detection", {})
+    figures_subdir = wd_cfg.get("figures_subdir", "figures_wake")
+    out_dir = _SCRIPT_DIR / figures_subdir
     generate_visualizations(windows, labels, X, y, results, X_test, y_test, out_dir)
-    best_model_name = max(results.keys(), key=lambda k: results[k]['accuracy'])
+    best_model_name = max(results.keys(), key=lambda k: results[k]["accuracy"])
     print_classification_summary(results, best_model_name)
-    logger.info('\nClassification Report:')
+    logger.info("\nClassification Report:")
     best_result = results[best_model_name]
-    logger.info(classification_report(best_result['y_test'], best_result['y_pred'], target_names=['Free-Stream', 'Wake']))
-    logger.info(f'\nVisualizations saved to: {out_dir}/')
-    logger.info('\nAnalysis complete!')
-if __name__ == '__main__':
-    main()
+    logger.info(
+        classification_report(
+            best_result["y_test"],
+            best_result["y_pred"],
+            target_names=["Free-Stream", "Wake"],
+        )
+    )
+    logger.info(f"\nVisualizations saved to: {out_dir}/")
+    logger.info("\nAnalysis complete!")
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Wake detection using persistent homology")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)

@@ -1,11 +1,20 @@
 """
 Turbulence Intensity Classification Using Persistence Images and CNNs.
-
-Classifies high vs low turbulence from SCADA data using topological deep learning.
+Run from repo root: python path/to/37_turbulence_persistence_images_blog_code.py [--config path/to/config.yaml]
 """
+import sys
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 import os
 import requests
 from io import StringIO
@@ -24,6 +33,8 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 import warnings
 import logging
+
+from config.load import load_config
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -138,27 +149,30 @@ def get_nrel_api_key() -> str:
 
 
 def fetch_nrel_wind_data(
+    cfg: Optional[Dict[str, Any]] = None,
     lat: float = 41.5,
     lon: float = -93.5,
-    years: List[int] = [2017]
+    years: Optional[List[int]] = None,
 ) -> Optional[pd.DataFrame]:
     """
     Fetch wind data from NREL Wind Toolkit API.
-    
-    Args:
-        lat: Latitude coordinate.
-        lon: Longitude coordinate.
-        years: List of years to fetch (must be 2015-2023).
-    
-    Returns:
-        DataFrame with wind data or None if fetch fails.
-    
-    Raises:
-        ValueError: If API key is missing or years are invalid.
+    If cfg is provided, nrel.lat, nrel.lon, nrel.years, nrel.api_key, nrel.base_url are used.
     """
-    api_key = get_nrel_api_key()
+    if cfg is not None:
+        nrel = cfg.get("nrel", {})
+        lat = nrel.get("lat", 41.5)
+        lon = nrel.get("lon", -93.5)
+        years = nrel.get("years", [2017, 2018])
+        api_key = nrel.get("api_key") or os.environ.get("NREL_API_KEY") or get_nrel_api_key()
+        base_url = nrel.get("base_url", NREL_API_URL)
+        timeout = nrel.get("request_timeout_seconds", REQUEST_TIMEOUT_SECONDS)
+    else:
+        years = years if years is not None else [2017]
+        api_key = get_nrel_api_key()
+        base_url = NREL_API_URL
+        timeout = REQUEST_TIMEOUT_SECONDS
     all_data = []
-    
+
     for year in years:
         if year < 2015 or year > 2023:
             logger.warning(f"Year {year} out of valid range (2015-2023), skipping")
@@ -178,7 +192,7 @@ def fetch_nrel_wind_data(
         
         try:
             response = requests.get(
-                NREL_API_URL, params=params, timeout=REQUEST_TIMEOUT_SECONDS
+                base_url, params=params, timeout=timeout
             )
             response.raise_for_status()
             
@@ -794,23 +808,24 @@ def plot_roc_curve(
     logger.info(f"Saved ROC curve to {out_path}")
 
 
-def main() -> None:
+def main(config_path: Optional[Path] = None) -> None:
     """
-    Main execution function for turbulence classification.
-    
-    Fetches data, simulates turbine response, creates persistence images,
-    trains CNN, and evaluates results.
+    Main execution: load config, then fetch data, simulate turbine response,
+    create persistence images, train CNN, and evaluate.
     """
-    np.random.seed(RANDOM_SEED)
-    torch.manual_seed(RANDOM_SEED)
-    
-    logger.info('=' * 70)
-    logger.info('Turbulence Classification Using Persistence Images & CNN')
-    logger.info('=' * 70)
-    
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    turb = cfg.get("turbulence", {})
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    logger.info("=" * 70)
+    logger.info("Turbulence Classification Using Persistence Images & CNN")
+    logger.info("=" * 70)
+
     # Fetch data
-    logger.info('\n1. Fetching NREL wind data...')
-    wind_data = fetch_nrel_wind_data(lat=41.5, lon=-93.5, years=[2017, 2018])
+    logger.info("\n1. Fetching NREL wind data...")
+    wind_data = fetch_nrel_wind_data(cfg)
     if wind_data is None:
         logger.error('Failed to fetch data')
         return
@@ -819,7 +834,7 @@ def main() -> None:
     
     # Simulate turbulence and turbine
     logger.info('\n2. Simulating turbulence and turbine response...')
-    df = simulate_turbulence_and_turbine(wind_data, random_seed=RANDOM_SEED)
+    df = simulate_turbulence_and_turbine(wind_data, random_seed=seed)
     ti_low = (df['turbulence_intensity'] < TI_LOW_THRESHOLD).sum()
     ti_high = (df['turbulence_intensity'] > TI_HIGH_THRESHOLD).sum()
     logger.info(
@@ -846,7 +861,7 @@ def main() -> None:
     X_train, X_val, y_train, y_val = train_test_split(
         X_train, y_train,
         test_size=VAL_SPLIT_RATIO,
-        random_state=RANDOM_SEED,
+        random_state=seed,
         stratify=y_train
     )
     
@@ -886,8 +901,9 @@ def main() -> None:
     )
     
     # Visualize
-    logger.info('\n7. Generating visualizations...')
-    out_dir = Path('figures_turbulence')
+    logger.info("\n7. Generating visualizations...")
+    figures_subdir = turb.get("figures_subdir", "figures_turbulence")
+    out_dir = _SCRIPT_DIR / figures_subdir
     out_dir.mkdir(exist_ok=True, parents=True)
     
     plot_roc_curve(labels_true, probs, auc, out_dir / 'roc_curve.png')
@@ -905,5 +921,9 @@ def main() -> None:
     logger.info('=' * 70)
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Turbulence classification (persistence images + CNN)")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)

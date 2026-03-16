@@ -1,17 +1,22 @@
 """
-Enhanced Topological Data Analysis of Wind Turbine SCADA Data
-This version explores advanced feature engineering and labeling strategies
-to maximize classification performance.
-
-Enhancements:
-1. Richer TDA features (birth times, death times, persistence statistics)
-2. Better labeling based on capacity factor and power coefficient
-3. Combined TDA + PCA features
-4. Multiple classifiers including ensemble methods
+Enhanced Topological Data Analysis of Wind Turbine SCADA Data.
+Run from repo root: python path/to/turbine_tda_enhanced.py [--config path/to/config.yaml]
 """
+import sys
+import os
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 import requests
 from io import StringIO
 from sklearn.preprocessing import StandardScaler
@@ -23,15 +28,14 @@ from sklearn.metrics import roc_auc_score, classification_report
 import matplotlib.pyplot as plt
 from ripser import ripser
 from persim import plot_diagrams
-import sys
-from pathlib import Path
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from config.load import load_config
 from tda_utils import setup_tufte_plot, TufteColors
-NREL_API_KEY = 'wpaaOciW3kYdcNMvRogmZEfdEueR52NS7g7Dxv0z'
-NREL_API_URL = 'https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv'
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
 
 def tufte_style(ax):
     """Apply minimalist Tufte-inspired styling."""
@@ -41,14 +45,24 @@ def tufte_style(ax):
     ax.spines['left'].set_position(('outward', 6))
     ax.spines['bottom'].set_position(('outward', 6))
 
-def fetch_nrel_wind_data(lat=41.0, lon=-95.5, years=[2017, 2018, 2019]):
-    """Fetch real wind data from NREL Wind Toolkit API for multiple years."""Fetch real wind data from NREL Wind Toolkit API for multiple years."""
+def fetch_nrel_wind_data(cfg):
+    """Fetch real wind data from NREL. Uses config for lat, lon, years, api_key, url, timeout."""
+    nrel = cfg.get("nrel", {})
+    lat = nrel.get("lat", 41.0)
+    lon = nrel.get("lon", -95.5)
+    years = nrel.get("years", [2017, 2018, 2019])
+    api_key = nrel.get("api_key") or os.environ.get("NREL_API_KEY", "")
+    base_url = nrel.get("base_url", "https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv")
+    timeout = nrel.get("request_timeout_seconds", 120)
+    email = nrel.get("email", "user@example.com")
+    interval = nrel.get("interval", "60")
+    attributes = nrel.get("attributes", "windspeed_100m,windspeed_80m,temperature_100m")
     all_data = []
     for year in years:
-        logger.info(f'   Fetching year {year}...')
-        params = {'api_key': NREL_API_KEY, 'wkt': f'POINT({lon} {lat})', 'attributes': 'windspeed_100m,windspeed_80m,temperature_100m', 'names': str(year), 'utc': 'true', 'leap_day': 'false', 'interval': '60', 'email': 'kyletjones@gmail.com'}
+        logger.info(f"   Fetching year {year}...")
+        params = {"api_key": api_key, "wkt": f"POINT({lon} {lat})", "attributes": attributes, "names": str(year), "utc": "true", "leap_day": "false", "interval": interval, "email": email}
         try:
-            response = requests.get(NREL_API_URL, params=params, timeout=120)
+            response = requests.get(base_url, params=params, timeout=timeout)
             response.raise_for_status()
             lines = response.text.strip().split('\n')
             data_start = 0
@@ -190,7 +204,7 @@ def build_rich_tda_matrix(Xw):
     return np.vstack(features)
 
 def build_pca_matrix(Xw, n_components=3):
-    """Build PCA features with more components."""Build PCA features with more components."""
+    """Build PCA features with more components."""
     n_win, win, dim = Xw.shape
     n_components = min(n_components, dim)
     flat = Xw.reshape(n_win * win, dim)
@@ -219,7 +233,7 @@ def purged_forward_splits(times, n_splits=5, purge_windows=1):
     return splits
 
 def evaluate_model(X_train, y_train, X_test, y_test, model):
-    """Train model and return comprehensive metrics."""Train model and return comprehensive metrics."""
+    """Train model and return comprehensive metrics."""
     model.fit(X_train, y_train)
     if hasattr(model, 'predict_proba'):
         p = model.predict_proba(X_test)[:, 1]
@@ -240,34 +254,32 @@ def evaluate_model(X_train, y_train, X_test, y_test, model):
     f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0
     return (auc, acc, precision, recall, f1)
 
-def main():
-    """
-    Perform main operation.
-
-    Args:
-        None
-
-    Returns:
-        Result of the operation..
-    """
-    np.random.seed(0)
-    out_dir = Path('figures')
-    out_dir.mkdir(exist_ok=True)
-    logger.info('=' * 70)
-    logger.info('ENHANCED Topological Data Analysis of Wind Turbine SCADA')
-    logger.info('Exploring advanced features and labeling strategies')
-    logger.info('=' * 70)
-    logger.info('\n1. Fetching NREL Wind Toolkit data...')
-    logger.info('   Location: Central Iowa (41.0°N, 95.5°W)')
-    logger.info('   Years: 2017-2019 (3 years)')
-    wind_data = fetch_nrel_wind_data(lat=41.0, lon=-95.5, years=[2017, 2018, 2019])
+def main(config_path=None):
+    """Main entry: load config and run pipeline."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    rt = cfg.get("regime_tda", {})
+    np.random.seed(seed)
+    figures_subdir = rt.get("figures_subdir", "figures")
+    out_dir = _SCRIPT_DIR / figures_subdir
+    out_dir.mkdir(exist_ok=True, parents=True)
+    logger.info("=" * 70)
+    logger.info("ENHANCED Topological Data Analysis of Wind Turbine SCADA")
+    logger.info("Exploring advanced features and labeling strategies")
+    logger.info("=" * 70)
+    logger.info("\n1. Fetching NREL Wind Toolkit data...")
+    nrel = cfg.get("nrel", {})
+    logger.info(f"   Location: ({nrel.get('lat', 41.0)}°N, {nrel.get('lon', -95.5)}°W)")
+    logger.info(f"   Years: {nrel.get('years', [2017, 2018, 2019])}")
+    wind_data = fetch_nrel_wind_data(cfg)
     if wind_data is None:
         logger.info('Could not fetch data')
         return
     df = simulate_turbine_from_wind(wind_data)
     logger.info(f'   Generated {len(df):,} turbine records')
     logger.info('\n2. Creating windows with advanced labeling...')
-    Xw, y_cf, y_regime, t = make_advanced_windows(df, win_size=256)
+    win_size = rt.get("win_size", 256)
+    Xw, y_cf, y_regime, t = make_advanced_windows(df, win_size=win_size)
     logger.info(f'   Created {len(Xw)} windows')
     logger.info(f'   Capacity factor labels: {(y_cf == 0).sum()} low-productivity, {(y_cf == 1).sum()} high-productivity')
     logger.info(f'   Operating stability labels: {(y_regime == 0).sum()} variable, {(y_regime == 1).sum()} stable')
@@ -281,9 +293,12 @@ def main():
     logger.info('   c) Combined TDA + PCA features...')
     X_combined = np.hstack([X_tda, X_pca])
     logger.info(f'      Combined feature shape: {X_combined.shape}')
-    models = {'LogReg': LogisticRegression(max_iter=2000, random_state=0), 'SVM-RBF': SVC(kernel='rbf', probability=True, random_state=0, C=1.0, gamma='scale'), 'RandomForest': RandomForestClassifier(n_estimators=100, max_depth=10, random_state=0), 'GradBoost': GradientBoostingClassifier(n_estimators=100, max_depth=5, random_state=0)}
+    n_est = cfg.get("farm_coordination", {}).get("n_estimators", 100) or 100
+    models = {"LogReg": LogisticRegression(max_iter=2000, random_state=seed), "SVM-RBF": SVC(kernel="rbf", probability=True, random_state=seed, C=1.0, gamma="scale"), "RandomForest": RandomForestClassifier(n_estimators=n_est, max_depth=10, random_state=seed), "GradBoost": GradientBoostingClassifier(n_estimators=n_est, max_depth=5, random_state=seed)}
     logger.info('\n4. Comprehensive evaluation...')
-    splits = purged_forward_splits(t, n_splits=5, purge_windows=1)
+    n_splits = rt.get("n_splits", 5)
+    purge_windows = rt.get("purge_windows", 1)
+    splits = purged_forward_splits(t, n_splits=n_splits, purge_windows=purge_windows)
     logger.info(f'   Using {len(splits)} folds with purged forward CV')
     configs = [('Capacity Factor (Productivity)', y_cf), ('Operating Stability (Variability)', y_regime)]
     feature_sets = [('TDA Only', X_tda), ('PCA Only', X_pca), ('TDA + PCA', X_combined)]
@@ -346,5 +361,9 @@ def main():
     logger.info('- Capacity factor labeling may be more meaningful than median split')
     logger.info('- Ensemble methods (RF, GradBoost) handle complex feature interactions')
     logger.info('- Combined TDA+PCA features leverage both topological and geometric structure')
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Enhanced TDA of wind turbine SCADA")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)

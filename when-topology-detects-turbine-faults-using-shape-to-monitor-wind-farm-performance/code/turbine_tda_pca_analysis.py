@@ -1,10 +1,22 @@
 """
-PCA Component Analysis for Wind Turbine Classification
-Tests different numbers of PCA components to find optimal configuration
+PCA Component Analysis for Wind Turbine Classification.
+Run from repo root: python path/to/turbine_tda_pca_analysis.py [--config path/to/config.yaml]
 """
+import sys
+import os
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 import requests
 from io import StringIO
 from sklearn.preprocessing import StandardScaler
@@ -16,24 +28,33 @@ from sklearn.metrics import roc_auc_score
 import matplotlib.pyplot as plt
 from ripser import ripser
 from persim import plot_diagrams
-import sys
-from pathlib import Path
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from tda_utils import setup_tufte_plot, TufteColors
-NREL_API_KEY = 'wpaaOciW3kYdcNMvRogmZEfdEueR52NS7g7Dxv0z'
-NREL_API_URL = 'https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv'
 
-def fetch_nrel_wind_data(lat=41.0, lon=-95.5, years=[2017, 2018, 2019]):
-    """Fetch real wind data from NREL Wind Toolkit API for multiple years."""
+from config.load import load_config
+from tda_utils import setup_tufte_plot, TufteColors
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
+
+def fetch_nrel_wind_data(cfg):
+    """Fetch real wind data from NREL. Uses config for lat, lon, years, api_key, url, timeout."""
+    nrel = cfg.get("nrel", {})
+    lat = nrel.get("lat", 41.0)
+    lon = nrel.get("lon", -95.5)
+    years = nrel.get("years", [2017, 2018, 2019])
+    api_key = nrel.get("api_key") or os.environ.get("NREL_API_KEY", "")
+    base_url = nrel.get("base_url", "https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv")
+    timeout = nrel.get("request_timeout_seconds", 120)
+    email = nrel.get("email", "user@example.com")
+    interval = nrel.get("interval", "60")
+    attributes = nrel.get("attributes", "windspeed_100m,windspeed_80m,temperature_100m")
     all_data = []
     for year in years:
-        logger.info(f'   Fetching year {year}...')
-        params = {'api_key': NREL_API_KEY, 'wkt': f'POINT({lon} {lat})', 'attributes': 'windspeed_100m,windspeed_80m,temperature_100m', 'names': str(year), 'utc': 'true', 'leap_day': 'false', 'interval': '60', 'email': 'kyletjones@gmail.com'}
+        logger.info(f"   Fetching year {year}...")
+        params = {"api_key": api_key, "wkt": f"POINT({lon} {lat})", "attributes": attributes, "names": str(year), "utc": "true", "leap_day": "false", "interval": interval, "email": email}
         try:
-            response = requests.get(NREL_API_URL, params=params, timeout=120)
+            response = requests.get(base_url, params=params, timeout=timeout)
             response.raise_for_status()
             lines = response.text.strip().split('\n')
             data_start = 0
@@ -57,7 +78,7 @@ def fetch_nrel_wind_data(lat=41.0, lon=-95.5, years=[2017, 2018, 2019]):
     return df
 
 def simulate_turbine_from_wind(wind_df):
-    """Simulate realistic turbine response to actual wind conditions."""Simulate realistic turbine response to actual wind conditions."""
+    """Simulate realistic turbine response to actual wind conditions."""
     logger.info('   Simulating turbine response...')
     df = wind_df.copy()
     n = len(df)
@@ -116,7 +137,7 @@ def make_advanced_windows(df, win_size=256):
     return (Xw, yw_cf, tw)
 
 def lifetimes(dgm):
-    """Compute persistence lifetimes from a diagram."""Compute persistence lifetimes from a diagram."""
+    """Compute persistence lifetimes from a diagram."""
     if dgm.size == 0:
         return np.array([])
     L = dgm[:, 1] - dgm[:, 0]
@@ -145,7 +166,7 @@ def extract_rich_tda_features(window):
     return np.array(features)
 
 def build_rich_tda_matrix(Xw):
-    """Extract rich TDA features from all windows."""Extract rich TDA features from all windows."""
+    """Extract rich TDA features from all windows."""
     features = []
     for i, w in enumerate(Xw):
         if (i + 1) % 20 == 0:
@@ -200,7 +221,7 @@ def purged_forward_splits(times, n_splits=5, purge_windows=1):
     return splits
 
 def evaluate_model(X_train, y_train, X_test, y_test, model):
-    """Train model and return metrics."""Train model and return metrics."""
+    """Train model and return metrics."""
     model.fit(X_train, y_train)
     if hasattr(model, 'predict_proba'):
         p = model.predict_proba(X_test)[:, 1]
@@ -221,23 +242,17 @@ def evaluate_model(X_train, y_train, X_test, y_test, model):
     f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0
     return (auc, acc, f1)
 
-def main():
-    """
-    Perform main operation.
-
-    Args:
-        None
-
-    Returns:
-        Result of the operation..
-    """
-    np.random.seed(0)
-    logger.info('=' * 70)
-    logger.info('PCA Component Analysis for Wind Turbine Classification')
-    logger.info('Testing different numbers of PCA components')
-    logger.info('=' * 70)
-    logger.info('\n1. Fetching NREL Wind Toolkit data...')
-    wind_data = fetch_nrel_wind_data(lat=41.0, lon=-95.5, years=[2017, 2018, 2019])
+def main(config_path=None):
+    """Main entry: load config and run pipeline."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    logger.info("=" * 70)
+    logger.info("PCA Component Analysis for Wind Turbine Classification")
+    logger.info("Testing different numbers of PCA components")
+    logger.info("=" * 70)
+    logger.info("\n1. Fetching NREL Wind Toolkit data...")
+    wind_data = fetch_nrel_wind_data(cfg)
     if wind_data is None:
         logger.info('Could not fetch data')
         return
@@ -372,5 +387,9 @@ def main():
             logger.info(f'Variance Explained: {var_exp:.1%}')
         logger.info('=' * 70)
     logger.info('\nAnalysis complete!')
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="PCA component analysis for turbine classification")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)

@@ -1,13 +1,22 @@
 """
-Anomaly Detection in Wind Turbines Using Topological Data Analysis
-Detects when actual performance deviates from physics-based expectations
-
-This is a realistic application: identifying underperformance or faults
-by comparing actual vs theoretical power curve behavior.
+Anomaly Detection in Wind Turbines Using Topological Data Analysis.
+Run from repo root: python path/to/turbine_tda_anomaly.py [--config path/to/config.yaml]
 """
+import sys
+import os
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 import requests
 from io import StringIO
 from sklearn.preprocessing import StandardScaler
@@ -19,15 +28,14 @@ from sklearn.metrics import roc_auc_score, classification_report
 import matplotlib.pyplot as plt
 from ripser import ripser
 from persim import plot_diagrams
-import sys
-from pathlib import Path
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from config.load import load_config
 from tda_utils import setup_tufte_plot, TufteColors
-NREL_API_KEY = 'wpaaOciW3kYdcNMvRogmZEfdEueR52NS7g7Dxv0z'
-NREL_API_URL = 'https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv'
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
 
 def tufte_style(ax):
     """Apply minimalist styling."""
@@ -37,14 +45,24 @@ def tufte_style(ax):
     ax.spines['left'].set_position(('outward', 6))
     ax.spines['bottom'].set_position(('outward', 6))
 
-def fetch_nrel_wind_data(lat=41.0, lon=-95.5, years=[2017, 2018, 2019]):
-    """Fetch real wind data from NREL Wind Toolkit API."""Fetch real wind data from NREL Wind Toolkit API."""
+def fetch_nrel_wind_data(cfg):
+    """Fetch real wind data from NREL. Uses config for lat, lon, years, api_key, url, timeout."""
+    nrel = cfg.get("nrel", {})
+    lat = nrel.get("lat", 41.0)
+    lon = nrel.get("lon", -95.5)
+    years = nrel.get("years", [2017, 2018, 2019])
+    api_key = nrel.get("api_key") or os.environ.get("NREL_API_KEY", "")
+    base_url = nrel.get("base_url", "https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv")
+    timeout = nrel.get("request_timeout_seconds", 120)
+    email = nrel.get("email", "user@example.com")
+    interval = nrel.get("interval", "60")
+    attributes = nrel.get("attributes", "windspeed_100m,windspeed_80m,temperature_100m")
     all_data = []
     for year in years:
-        logger.info(f'   Fetching year {year}...')
-        params = {'api_key': NREL_API_KEY, 'wkt': f'POINT({lon} {lat})', 'attributes': 'windspeed_100m,windspeed_80m,temperature_100m', 'names': str(year), 'utc': 'true', 'leap_day': 'false', 'interval': '60', 'email': 'kyletjones@gmail.com'}
+        logger.info(f"   Fetching year {year}...")
+        params = {"api_key": api_key, "wkt": f"POINT({lon} {lat})", "attributes": attributes, "names": str(year), "utc": "true", "leap_day": "false", "interval": interval, "email": email}
         try:
-            response = requests.get(NREL_API_URL, params=params, timeout=120)
+            response = requests.get(base_url, params=params, timeout=timeout)
             response.raise_for_status()
             lines = response.text.strip().split('\n')
             data_start = 0
@@ -192,7 +210,7 @@ def lifetimes(dgm):
     return L[np.isfinite(L)]
 
 def extract_rich_tda_features(window):
-    """Extract comprehensive TDA features."""Extract comprehensive TDA features."""
+    """Extract comprehensive TDA features."""
     result = ripser(window, maxdim=1)['dgms']
     features = []
     H0 = result[0] if len(result) > 0 else np.empty((0, 2))
@@ -223,7 +241,7 @@ def build_rich_tda_matrix(Xw):
     return np.vstack(features)
 
 def build_pca_matrix(Xw, n_components=3):
-    """Build PCA features."""Build PCA features."""
+    """Build PCA features."""
     n_win, win, dim = Xw.shape
     n_components = min(n_components, dim)
     flat = Xw.reshape(n_win * win, dim)
@@ -252,7 +270,7 @@ def purged_forward_splits(times, n_splits=5, purge_windows=1):
     return splits
 
 def evaluate_model(X_train, y_train, X_test, y_test, model):
-    """Train and evaluate model."""Train and evaluate model."""
+    """Train and evaluate model."""
     model.fit(X_train, y_train)
     if hasattr(model, 'predict_proba'):
         p = model.predict_proba(X_test)[:, 1]
@@ -274,25 +292,21 @@ def evaluate_model(X_train, y_train, X_test, y_test, model):
     f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0
     return (auc, acc, f1, precision, recall)
 
-def main():
-    """
-    Perform main operation.
-
-    Args:
-        None
-
-    Returns:
-        Result of the operation..
-    """
-    np.random.seed(42)
-    out_dir = Path('figures')
-    out_dir.mkdir(exist_ok=True)
-    logger.info('=' * 70)
-    logger.info('Wind Turbine Anomaly Detection Using TDA')
-    logger.info('Detecting performance degradation vs physics-based expectations')
-    logger.info('=' * 70)
-    logger.info('\n1. Fetching NREL Wind Toolkit data...')
-    wind_data = fetch_nrel_wind_data(lat=41.0, lon=-95.5, years=[2017, 2018, 2019])
+def main(config_path=None):
+    """Main entry: load config and run pipeline."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    rt = cfg.get("regime_tda", {})
+    np.random.seed(seed)
+    figures_subdir = rt.get("figures_subdir", "figures")
+    out_dir = _SCRIPT_DIR / figures_subdir
+    out_dir.mkdir(exist_ok=True, parents=True)
+    logger.info("=" * 70)
+    logger.info("Wind Turbine Anomaly Detection Using TDA")
+    logger.info("Detecting performance degradation vs physics-based expectations")
+    logger.info("=" * 70)
+    logger.info("\n1. Fetching NREL Wind Toolkit data...")
+    wind_data = fetch_nrel_wind_data(cfg)
     if wind_data is None:
         logger.info('Could not fetch data')
         return
@@ -300,7 +314,8 @@ def main():
     logger.info(f'   Generated {len(df):,} turbine records')
     logger.info(f"   Wind speed range: {df['wind_speed'].min():.1f} - {df['wind_speed'].max():.1f} m/s")
     logger.info('\n2. Creating windows with anomaly labels...')
-    Xw, y, t, stats = make_anomaly_windows(df, win_size=256)
+    win_size = rt.get("win_size", 256)
+    Xw, y, t, stats = make_anomaly_windows(df, win_size=win_size)
     logger.info(f'   Created {len(Xw)} windows')
     logger.info(f'   Labels: {(y == 0).sum()} normal, {(y == 1).sum()} anomalous')
     logger.info(f'   Anomaly rate: {y.mean() * 100:.1f}%')
@@ -542,176 +557,10 @@ def generate_visualizations(df, Xw, y, results, out_dir):
         plt.tight_layout()
         plt.savefig(out_dir / 'feature_importance.png', dpi=300, bbox_inches='tight')
         plt.close()
-if __name__ == '__main__':
-    main()
-"""Generate comprehensive visualizations."""
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
-    feature_sets = ['TDA Only', 'PCA Only', 'TDA + PCA']
-    model_names = ['LogReg', 'SVM-RBF', 'RandomForest', 'GradBoost']
-    for feat_idx, feat_name in enumerate(feature_sets):
-        if feat_name not in results:
-            continue
-        aucs = [results[feat_name].get(m, [np.nan] * 5)[0] for m in model_names]
-        x = np.arange(len(model_names)) + feat_idx * 0.25
-        ax1.bar(x, aucs, width=0.25, label=feat_name, alpha=0.8)
-    ax1.set_ylabel('AUC', fontsize=11)
-    ax1.set_xlabel('Model', fontsize=11)
-    ax1.set_title('Model Performance: AUC Comparison', fontsize=12, fontweight='bold')
-    ax1.set_xticks(np.arange(len(model_names)) + 0.25)
-    ax1.set_xticklabels(model_names, rotation=15, ha='right')
-    ax1.legend(fontsize=9)
-    ax1.set_ylim([0, 1])
-    tufte_style(ax1)
-    for feat_idx, feat_name in enumerate(feature_sets):
-        if feat_name not in results:
-            continue
-        f1s = [results[feat_name].get(m, [np.nan] * 5)[2] for m in model_names]
-        x = np.arange(len(model_names)) + feat_idx * 0.25
-        ax2.bar(x, f1s, width=0.25, label=feat_name, alpha=0.8)
-    ax2.set_ylabel('F1 Score', fontsize=11)
-    ax2.set_xlabel('Model', fontsize=11)
-    ax2.set_title('Model Performance: F1 Score Comparison', fontsize=12, fontweight='bold')
-    ax2.set_xticks(np.arange(len(model_names)) + 0.25)
-    ax2.set_xticklabels(model_names, rotation=15, ha='right')
-    ax2.legend(fontsize=9)
-    ax2.set_ylim([0, 1])
-    tufte_style(ax2)
-    plt.tight_layout()
-    plt.savefig(out_dir / 'model_comparison.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    fig, ax = plt.subplots(figsize=(14, 5))
-    sample_df = df.iloc[:2000].copy()
-    ax.plot(sample_df['time'], sample_df['expected_power'], 'k-', alpha=0.6, linewidth=1, label='Expected Power (Physics-Based)')
-    ax.plot(sample_df['time'], sample_df['power'], 'b-', alpha=0.8, linewidth=0.8, label='Actual Power')
-    fault_mask = sample_df['fault'].values
-    fault_regions = []
-    in_fault = False
-    start_idx = 0
-    for i, is_fault in enumerate(fault_mask):
-        if is_fault and (not in_fault):
-            start_idx = i
-            in_fault = True
-        elif not is_fault and in_fault:
-            fault_regions.append((start_idx, i))
-            in_fault = False
-    if in_fault:
-        fault_regions.append((start_idx, len(fault_mask)))
-    for start, end in fault_regions:
-        ax.axvspan(sample_df['time'].iloc[start], sample_df['time'].iloc[end - 1], alpha=0.2, color='red', label='Fault Period' if start == fault_regions[0][0] else '')
-    ax.set_ylabel('Power (kW)', fontsize=11)
-    ax.set_xlabel('Time', fontsize=11)
-    ax.set_title('Wind Turbine Performance: Actual vs Expected Power', fontsize=12, fontweight='bold')
-    ax.legend(fontsize=9)
-    tufte_style(ax)
-    plt.tight_layout()
-    plt.savefig(out_dir / 'power_timeline.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
-    normal_deviation = df[df['fault'] is False]['power_ratio'].values
-    fault_deviation = df[df['fault'] is True]['power_ratio'].values
-    ax1.hist(normal_deviation, bins=50, alpha=0.6, color='green', label=f'Normal (n={len(normal_deviation):,})', density=True)
-    ax1.hist(fault_deviation, bins=50, alpha=0.6, color='red', label=f'Fault (n={len(fault_deviation):,})', density=True)
-    ax1.axvline(1.0, color='k', linestyle='--', linewidth=1, label='Perfect Performance')
-    ax1.axvline(0.8, color='orange', linestyle='--', linewidth=1, label='Anomaly Threshold')
-    ax1.set_xlabel('Power Ratio (Actual / Expected)', fontsize=11)
-    ax1.set_ylabel('Density', fontsize=11)
-    ax1.set_title('Performance Distribution', fontsize=12, fontweight='bold')
-    ax1.legend(fontsize=9)
-    ax1.set_xlim([0, 1.5])
-    tufte_style(ax1)
-    window_ratios_normal = []
-    window_ratios_anomaly = []
-    win_size = 256
-    n = len(df)
-    starts = np.arange(0, n - win_size + 1, win_size)
-    for s in starts:
-        window_data = df.iloc[s:s + win_size]
-        mean_ratio = window_data['power_ratio'].mean()
-        fault_frac = window_data['fault'].mean()
-        is_anomalous = mean_ratio < 0.8 or fault_frac > 0.4
-        if is_anomalous:
-            window_ratios_anomaly.append(mean_ratio)
-        else:
-            window_ratios_normal.append(mean_ratio)
-    ax2.hist(window_ratios_normal, bins=20, alpha=0.6, color='green', label=f'Normal Windows (n={len(window_ratios_normal)})')
-    ax2.hist(window_ratios_anomaly, bins=20, alpha=0.6, color='red', label=f'Anomalous Windows (n={len(window_ratios_anomaly)})')
-    ax2.axvline(0.8, color='orange', linestyle='--', linewidth=2, label='Detection Threshold')
-    ax2.set_xlabel('Mean Power Ratio per Window', fontsize=11)
-    ax2.set_ylabel('Count', fontsize=11)
-    ax2.set_title('Window-Level Anomaly Distribution', fontsize=12, fontweight='bold')
-    ax2.legend(fontsize=9)
-    tufte_style(ax2)
-    plt.tight_layout()
-    plt.savefig(out_dir / 'performance_distribution.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-    normal_indices = np.where(y == 0)[0]
-    anomaly_indices = np.where(y == 1)[0]
-    for i, ax in enumerate(axes[0]):
-        if i < len(normal_indices):
-            idx = normal_indices[i]
-            window = Xw[idx]
-            ax.scatter(window[:, 0], window[:, 2], c=np.arange(len(window)), cmap='viridis', s=10, alpha=0.6)
-            ax.set_xlabel('Wind Speed (m/s)', fontsize=10)
-            ax.set_ylabel('Power (kW)', fontsize=10)
-            ax.set_title(f'Normal Window {i + 1}', fontsize=11, fontweight='bold', color='green')
-            tufte_style(ax)
-    for i, ax in enumerate(axes[1]):
-        if i < len(anomaly_indices):
-            idx = anomaly_indices[i]
-            window = Xw[idx]
-            ax.scatter(window[:, 0], window[:, 2], c=np.arange(len(window)), cmap='Reds', s=10, alpha=0.6)
-            ax.set_xlabel('Wind Speed (m/s)', fontsize=10)
-            ax.set_ylabel('Power (kW)', fontsize=10)
-            ax.set_title(f'Anomalous Window {i + 1}', fontsize=11, fontweight='bold', color='red')
-            tufte_style(ax)
-    plt.tight_layout()
-    plt.savefig(out_dir / 'phase_portraits_comparison.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    if len(normal_indices) > 0:
-        idx = normal_indices[0]
-        window = Xw[idx]
-        result = ripser(window, maxdim=1)['dgms']
-        ax = axes[0]
-        if len(result) > 1:
-            plot_diagrams(result, show=False, ax=ax)
-        ax.set_title('Persistence Diagram: Normal Operation', fontsize=12, fontweight='bold', color='green')
-        ax.set_xlabel('Birth', fontsize=11)
-        ax.set_ylabel('Death', fontsize=11)
-    if len(anomaly_indices) > 0:
-        idx = anomaly_indices[0]
-        window = Xw[idx]
-        result = ripser(window, maxdim=1)['dgms']
-        ax = axes[1]
-        if len(result) > 1:
-            plot_diagrams(result, show=False, ax=ax)
-        ax.set_title('Persistence Diagram: Anomalous Operation', fontsize=12, fontweight='bold', color='red')
-        ax.set_xlabel('Birth', fontsize=11)
-        ax.set_ylabel('Death', fontsize=11)
-    plt.tight_layout()
-    plt.savefig(out_dir / 'persistence_comparison.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    if 'TDA + PCA' in results and 'RandomForest' in results['TDA + PCA']:
-        from sklearn.ensemble import RandomForestClassifier
-        X_tda = build_rich_tda_matrix(Xw)
-        X_pca = build_pca_matrix(Xw, n_components=3)
-        X_combined = np.hstack([X_tda, X_pca])
-        rf = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=0, class_weight='balanced')
-        rf.fit(X_combined, y)
-        importances = rf.feature_importances_
-        feature_names = ['H0: Count', 'H0: Max Life', 'H0: Mean Life', 'H1: Count', 'H1: Sum Life', 'H1: Max Life', 'H1: Mean Life', 'H1: Std Life', 'H1: Mean Birth', 'H1: Mean Death', 'PC1: Mean', 'PC1: Std', 'PC1: Min', 'PC1: Max', 'PC2: Mean', 'PC2: Std', 'PC2: Min', 'PC2: Max', 'PC3: Mean', 'PC3: Std', 'PC3: Min', 'PC3: Max']
-        indices = np.argsort(importances)[::-1][:15]
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.barh(range(len(indices)), importances[indices], color='steelblue', alpha=0.8)
-        ax.set_yticks(range(len(indices)))
-        ax.set_yticklabels([feature_names[i] for i in indices], fontsize=10)
-        ax.set_xlabel('Feature Importance', fontsize=11)
-        ax.set_title('Top 15 Features: Random Forest (TDA + PCA)', fontsize=12, fontweight='bold')
-        ax.invert_yaxis()
-        tufte_style(ax)
-        plt.tight_layout()
-        plt.savefig(out_dir / 'feature_importance.png', dpi=300, bbox_inches='tight')
-        plt.close()
-if __name__ == '__main__':
-    main()
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Anomaly detection using TDA")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)

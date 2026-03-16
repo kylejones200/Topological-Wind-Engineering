@@ -1,0 +1,81 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+*.manifest
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.uv/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# IDEs / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-*
+
+# Data (downloaded or generated)
+data/
+*.csv
+*.mat
+*.xlsx
+*.parquet
+*.h5
+*.hdf5
+
+# Generated figures and outputs
+figures/
+figures_*/
+*.png
+*.pdf
+*.eps
+output/
+out/
+results/
+
+# Logs and caches
+*.log
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets / local config
+.env
+.env.local
+*.pem
+secrets/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Optional: uncomment if you want to ignore large NREL/OpenOA caches
+# .openoa_cache/

@@ -4,12 +4,23 @@ Topological Data Analysis of Wind Turbine SCADA Data
 This script demonstrates topological classification of wind turbine operating states
 using persistent homology. It includes leak-safe evaluation for time-series data.
 
-Requirements:
-    pip install pandas numpy matplotlib scikit-learn ripser persim 'openoa[examples]'
+Run from repo root: python path/to/turbine_tda_analysis.py [--config path/to/config.yaml]
+Requirements: pip install pandas numpy matplotlib scikit-learn ripser persim 'openoa[examples]'
 """
+import sys
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 import zipfile
 import io
 from sklearn.preprocessing import StandardScaler
@@ -20,13 +31,13 @@ from sklearn.metrics import roc_auc_score
 import matplotlib.pyplot as plt
 from ripser import ripser
 from persim import plot_diagrams
-import sys
-from pathlib import Path
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from config.load import load_config
 from tda_utils import setup_tufte_plot, TufteColors
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 try:
     import importlib.resources as rsrc
     import openoa
@@ -220,21 +231,28 @@ def evaluate_model(X_train, y_train, X_test, y_test, model):
     acc = ((p > 0.5).astype(int) == y_test).mean()
     return (auc, acc)
 
-def main():
-    """Main analysis workflow."""
-    np.random.seed(0)
-    out_dir = Path('figures')
-    out_dir.mkdir(exist_ok=True)
-    logger.info('=' * 60)
-    logger.info('Topological Data Analysis of Wind Turbine SCADA')
-    logger.info('=' * 60)
-    logger.info('\n1. Loading SCADA data...')
+def main(config_path=None):
+    """Main analysis workflow. All parameters from config."""
+    cfg = load_config(config_path)
+    rt = cfg.get("regime_tda", {})
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    win_size = rt.get("win_size_analysis", 512)
+    n_splits = rt.get("n_splits_analysis", 6)
+    purge_windows = rt.get("purge_windows", 1)
+    figures_subdir = rt.get("figures_subdir", "figures")
+    out_dir = _SCRIPT_DIR / figures_subdir
+    out_dir.mkdir(exist_ok=True, parents=True)
+    logger.info("=" * 60)
+    logger.info("Topological Data Analysis of Wind Turbine SCADA")
+    logger.info("=" * 60)
+    logger.info("\n1. Loading SCADA data...")
     df = load_scada()
-    logger.info(f'   Loaded {len(df):,} records')
+    logger.info(f"   Loaded {len(df):,} records")
     logger.info(f"   Time span: {df['time'].min()} to {df['time'].max()}")
-    logger.info('\n2. Creating non-overlapping windows...')
-    Xw, y, t = make_nonoverlapping_windows(df, win_size=512)
-    logger.info(f'   Created {len(Xw)} windows of 512 samples each')
+    logger.info("\n2. Creating non-overlapping windows...")
+    Xw, y, t = make_nonoverlapping_windows(df, win_size=win_size)
+    logger.info(f"   Created {len(Xw)} windows of {win_size} samples each")
     logger.info(f'   Label distribution: {(y == 0).sum()} low-power, {(y == 1).sum()} high-power')
     logger.info('\n3. Building phase portrait...')
     X_flat = Xw.reshape(-1, 3)
@@ -251,8 +269,9 @@ def main():
     plt.savefig(out_dir / 'phase_portrait.png', dpi=200, bbox_inches='tight')
     plt.close()
     logger.info(f"   Saved: {out_dir / 'phase_portrait.png'}")
-    logger.info('\n4. Computing persistent homology...')
-    sample_idx = np.random.choice(len(X_std), size=min(8000, len(X_std)), replace=False)
+    logger.info("\n4. Computing persistent homology...")
+    sample_size = rt.get("sample_size_diagram", 8000)
+    sample_idx = np.random.choice(len(X_std), size=min(sample_size, len(X_std)), replace=False)
     result = ripser(X_std[sample_idx], maxdim=1)
     dgms = result['dgms']
     plt.figure(figsize=(6, 5))
@@ -274,9 +293,9 @@ def main():
     X_tda = build_tda_matrix(Xw)
     logger.info('   b) PCA features (baseline)...')
     X_pca = build_pca_matrix(Xw)
-    logger.info('\n6. Evaluating with purged forward cross-validation...')
-    splits = purged_forward_splits(t, n_splits=6, purge_windows=1)
-    logger.info(f'   Using {len(splits)} folds with 1-window purge gap')
+    logger.info("\n6. Evaluating with purged forward cross-validation...")
+    splits = purged_forward_splits(t, n_splits=n_splits, purge_windows=purge_windows)
+    logger.info(f"   Using {len(splits)} folds with {purge_windows}-window purge gap")
     logger.info('   This prevents temporal leakage between train and test sets')
     results = {'TDA + LogReg': [], 'PCA + LogReg': [], 'PCA + SVM-Lin': [], 'PCA + SVM-RBF': []}
     for fold_idx, (train_idx, test_idx) in enumerate(splits):
@@ -284,14 +303,14 @@ def main():
         Xt_tr, Xt_te = (X_tda[train_idx], X_tda[test_idx])
         Xp_tr, Xp_te = (X_pca[train_idx], X_pca[test_idx])
         y_tr, y_te = (y[train_idx], y[test_idx])
-        auc, acc = evaluate_model(Xt_tr, y_tr, Xt_te, y_te, LogisticRegression(max_iter=1000, random_state=0))
-        results['TDA + LogReg'].append((auc, acc))
-        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, LogisticRegression(max_iter=1000, random_state=0))
-        results['PCA + LogReg'].append((auc, acc))
-        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, SVC(kernel='linear', probability=True, random_state=0))
-        results['PCA + SVM-Lin'].append((auc, acc))
-        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, SVC(kernel='rbf', probability=True, random_state=0))
-        results['PCA + SVM-RBF'].append((auc, acc))
+        auc, acc = evaluate_model(Xt_tr, y_tr, Xt_te, y_te, LogisticRegression(max_iter=1000, random_state=seed))
+        results["TDA + LogReg"].append((auc, acc))
+        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, LogisticRegression(max_iter=1000, random_state=seed))
+        results["PCA + LogReg"].append((auc, acc))
+        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, SVC(kernel="linear", probability=True, random_state=seed))
+        results["PCA + SVM-Lin"].append((auc, acc))
+        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, SVC(kernel="rbf", probability=True, random_state=seed))
+        results["PCA + SVM-RBF"].append((auc, acc))
     logger.info('\n' + '=' * 60)
     logger.info('RESULTS (averaged across folds)')
     logger.info('=' * 60)
@@ -313,99 +332,10 @@ def main():
     logger.info('=' * 60)
     logger.info('\nAnalysis complete!')
     logger.info(f'Figures saved to: {out_dir.absolute()}/')
-if __name__ == '__main__':
-    main()
-"""Main analysis workflow."""
-    np.random.seed(0)
-    out_dir = Path('figures')
-    out_dir.mkdir(exist_ok=True)
-    logger.info('=' * 60)
-    logger.info('Topological Data Analysis of Wind Turbine SCADA')
-    logger.info('=' * 60)
-    logger.info('\n1. Loading SCADA data...')
-    df = load_scada()
-    logger.info(f'   Loaded {len(df):,} records')
-    logger.info(f"   Time span: {df['time'].min()} to {df['time'].max()}")
-    logger.info('\n2. Creating non-overlapping windows...')
-    Xw, y, t = make_nonoverlapping_windows(df, win_size=512)
-    logger.info(f'   Created {len(Xw)} windows of 512 samples each')
-    logger.info(f'   Label distribution: {(y == 0).sum()} low-power, {(y == 1).sum()} high-power')
-    logger.info('\n3. Building phase portrait...')
-    X_flat = Xw.reshape(-1, 3)
-    X_std = StandardScaler().fit_transform(X_flat)
-    Z = PCA(n_components=2, random_state=0).fit_transform(X_std)
-    plt.figure(figsize=(6, 6))
-    ax = plt.gca()
-    ax.scatter(Z[:, 0], Z[:, 1], s=2, alpha=0.3, c='steelblue')
-    ax.set_title('Turbine Phase Portrait (PCA)')
-    ax.set_xlabel('PC1')
-    ax.set_ylabel('PC2')
-    tufte_style(ax)
-    plt.tight_layout()
-    plt.savefig(out_dir / 'phase_portrait.png', dpi=200, bbox_inches='tight')
-    plt.close()
-    logger.info(f"   Saved: {out_dir / 'phase_portrait.png'}")
-    logger.info('\n4. Computing persistent homology...')
-    sample_idx = np.random.choice(len(X_std), size=min(8000, len(X_std)), replace=False)
-    result = ripser(X_std[sample_idx], maxdim=1)
-    dgms = result['dgms']
-    plt.figure(figsize=(6, 5))
-    plot_diagrams(dgms, show=False)
-    ax = plt.gca()
-    ax.set_title('Persistence Diagram')
-    tufte_style(ax)
-    plt.tight_layout()
-    plt.savefig(out_dir / 'persistence_diagram.png', dpi=200, bbox_inches='tight')
-    plt.close()
-    logger.info(f"   Saved: {out_dir / 'persistence_diagram.png'}")
-    if len(dgms) > 1 and dgms[1].size > 0:
-        L = lifetimes(dgms[1])
-        if L.size > 0:
-            max_h1 = L.max()
-            logger.info(f'   Max H1 persistence (loop strength): {max_h1:.4f}')
-    logger.info('\n5. Extracting features...')
-    logger.info('   a) TDA features (persistent homology)...')
-    X_tda = build_tda_matrix(Xw)
-    logger.info('   b) PCA features (baseline)...')
-    X_pca = build_pca_matrix(Xw)
-    logger.info('\n6. Evaluating with purged forward cross-validation...')
-    splits = purged_forward_splits(t, n_splits=6, purge_windows=1)
-    logger.info(f'   Using {len(splits)} folds with 1-window purge gap')
-    logger.info('   This prevents temporal leakage between train and test sets')
-    results = {'TDA + LogReg': [], 'PCA + LogReg': [], 'PCA + SVM-Lin': [], 'PCA + SVM-RBF': []}
-    for fold_idx, (train_idx, test_idx) in enumerate(splits):
-        logger.info(f'   Fold {fold_idx + 1}/{len(splits)}...')
-        Xt_tr, Xt_te = (X_tda[train_idx], X_tda[test_idx])
-        Xp_tr, Xp_te = (X_pca[train_idx], X_pca[test_idx])
-        y_tr, y_te = (y[train_idx], y[test_idx])
-        auc, acc = evaluate_model(Xt_tr, y_tr, Xt_te, y_te, LogisticRegression(max_iter=1000, random_state=0))
-        results['TDA + LogReg'].append((auc, acc))
-        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, LogisticRegression(max_iter=1000, random_state=0))
-        results['PCA + LogReg'].append((auc, acc))
-        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, SVC(kernel='linear', probability=True, random_state=0))
-        results['PCA + SVM-Lin'].append((auc, acc))
-        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, SVC(kernel='rbf', probability=True, random_state=0))
-        results['PCA + SVM-RBF'].append((auc, acc))
-    logger.info('\n' + '=' * 60)
-    logger.info('RESULTS (averaged across folds)')
-    logger.info('=' * 60)
-    logger.info(f"{'Model':<20} {'AUC':>10} {'Accuracy':>10}")
-    logger.info('-' * 60)
-    for name, scores in results.items():
-        arr = np.array(scores)
-        auc_mean = arr[:, 0].mean()
-        acc_mean = arr[:, 1].mean()
-        logger.info(f'{name:<20} {auc_mean:>10.3f} {acc_mean:>10.3f}')
-    logger.info('=' * 60)
-    logger.info('\n' + '=' * 60)
-    logger.info('LEAKAGE PREVENTION SUMMARY')
-    logger.info('=' * 60)
-    logger.info('  ✓ Non-overlapping windows (no shared samples)')
-    logger.info('  ✓ Forward-chaining splits (test always after train)')
-    logger.info('  ✓ Purge gap at boundaries (removes temporal correlation)')
-    logger.info('  ✓ No future information in feature extraction')
-    logger.info('=' * 60)
-    logger.info('\nAnalysis complete!')
-    logger.info(f'Figures saved to: {out_dir.absolute()}/')
-if __name__ == '__main__':
-    main()
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="TDA of wind turbine SCADA (OpenOA)")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)

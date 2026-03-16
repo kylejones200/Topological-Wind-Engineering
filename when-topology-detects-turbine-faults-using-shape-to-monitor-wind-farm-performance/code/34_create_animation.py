@@ -1,11 +1,17 @@
 """
-Create animation for Article 34: Topological Turbine Anomaly Detection
-
-Shows:
-- Power output time series with anomalies
-- TDA persistence diagrams evolving
-- Anomaly detection in action
+Create topological turbine classification animation. Run from repo root: python path/to/34_create_animation.py [--config path/to/config.yaml]
 """
+import sys
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -13,7 +19,10 @@ import matplotlib.animation as animation
 from matplotlib.gridspec import GridSpec
 from datetime import datetime, timedelta
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+from config.load import load_config
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 np.random.seed(42)
 FPS = 10
@@ -48,7 +57,7 @@ def init():
     return []
 
 def update(frame):
-    """Update animation frame."""Update animation frame."""
+    """Update animation frame."""
     ax1.clear()
     ax2.clear()
     ax3.clear()
@@ -109,10 +118,25 @@ def update(frame):
     ax3.axis('off')
     ax3.set_title('Detection Status', fontsize=11, fontweight='normal')
     return []
-logger.info('Creating animation for Article 34: Topological Turbine Classification...')
-anim = animation.FuncAnimation(fig, update, init_func=init, frames=N_FRAMES, interval=1000 / FPS, blit=True, repeat=True)
-output_file = '34_turbine_tda_animation.gif'
-logger.info(f'Saving animation to {output_file}...')
-anim.save(output_file, writer='pillow', fps=FPS, dpi=100)
-logger.info(f'✓ Animation saved: {output_file}')
-plt.close()
+def main(config_path=None):
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    rt = cfg.get("regime_tda", {})
+    figures_subdir = rt.get("figures_subdir", "figures")
+    out_dir = _SCRIPT_DIR / figures_subdir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    output_file = out_dir / "34_turbine_tda_animation.gif"
+    logger.info("Creating topological turbine classification animation...")
+    anim = animation.FuncAnimation(fig, update, init_func=init, frames=N_FRAMES, interval=1000 / FPS, blit=True, repeat=True)
+    anim.save(str(output_file), writer="pillow", fps=FPS, dpi=100)
+    logger.info(f"✓ Animation saved: {output_file}")
+    plt.close()
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Create TDA classification animation")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)

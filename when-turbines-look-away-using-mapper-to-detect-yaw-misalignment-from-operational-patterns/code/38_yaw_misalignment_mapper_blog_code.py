@@ -1,10 +1,21 @@
 """
-Code extracted from 38_yaw_misalignment_mapper_blog.md
+Code extracted from 38_yaw_misalignment_mapper_blog.md.
+Run from repo root: python path/to/38_yaw_misalignment_mapper_blog_code.py [--config path/to/config.yaml]
 """
-'\nYaw Misalignment Detection Using Mapper\nDetects misalignment from operational patterns without wind direction sensors\n'
+import sys
+import os
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 import requests
 from io import StringIO
 from sklearn.preprocessing import StandardScaler
@@ -15,20 +26,37 @@ import matplotlib.pyplot as plt
 from scipy.spatial import distance_matrix
 import warnings
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-warnings.filterwarnings('ignore')
-NREL_API_KEY = 'wpaaOciW3kYdcNMvRogmZEfdEueR52NS7g7Dxv0z'
-NREL_API_URL = 'https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv'
 
-def fetch_nrel_wind_data(lat=41.5, lon=-93.5, years=[2017]):
-    """Fetch wind data from NREL."""
+from config.load import load_config
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+warnings.filterwarnings("ignore")
+
+
+def fetch_nrel_wind_data(cfg=None, lat=41.5, lon=-93.5, years=None):
+    """Fetch wind data from NREL. If cfg is provided, uses nrel section."""
+    if cfg is not None:
+        nrel = cfg.get("nrel", {})
+        lat = nrel.get("lat", 41.5)
+        lon = nrel.get("lon", -93.5)
+        years = nrel.get("years", [2017])
+        api_key = nrel.get("api_key") or os.environ.get("NREL_API_KEY", "")
+        base_url = nrel.get("base_url", "https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv")
+        timeout = nrel.get("request_timeout_seconds", 120)
+        email = nrel.get("email", "user@example.com")
+    else:
+        years = years or [2017]
+        api_key = os.environ.get("NREL_API_KEY", "")
+        base_url = "https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv"
+        timeout = 120
+        email = "kyletjones@gmail.com"
     all_data = []
     for year in years:
-        logger.info(f'   Fetching year {year}...')
-        params = {'api_key': NREL_API_KEY, 'wkt': f'POINT({lon} {lat})', 'attributes': 'windspeed_100m,winddirection_100m,temperature_100m', 'names': str(year), 'utc': 'true', 'leap_day': 'false', 'interval': '60', 'email': 'kyletjones@gmail.com'}
+        logger.info(f"   Fetching year {year}...")
+        params = {"api_key": api_key, "wkt": f"POINT({lon} {lat})", "attributes": "windspeed_100m,winddirection_100m,temperature_100m", "names": str(year), "utc": "true", "leap_day": "false", "interval": "60", "email": email}
         try:
-            response = requests.get(NREL_API_URL, params=params, timeout=120)
+            response = requests.get(base_url, params=params, timeout=timeout)
             response.raise_for_status()
             lines = response.text.strip().split('\n')
             data_start = 0
@@ -254,19 +282,17 @@ def visualize_mapper_graph(G, y_labels, out_dir):
     plt.savefig(out_dir / 'mapper_graph.png', dpi=300, bbox_inches='tight')
     plt.close()
 
-def main():
-    """
-    Main.
-
-    Returns:
-        Description of return value.
-    """
-    np.random.seed(42)
-    logger.info('=' * 70)
-    logger.info('Yaw Misalignment Detection Using Mapper')
-    logger.info('=' * 70)
-    logger.info('\n1. Fetching NREL wind data...')
-    wind_data = fetch_nrel_wind_data(lat=41.5, lon=-93.5, years=[2017, 2018])
+def main(config_path=None):
+    """Main entry: load config and run pipeline."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    ym = cfg.get("yaw_mapper", {})
+    np.random.seed(seed)
+    logger.info("=" * 70)
+    logger.info("Yaw Misalignment Detection Using Mapper")
+    logger.info("=" * 70)
+    logger.info("\n1. Fetching NREL wind data...")
+    wind_data = fetch_nrel_wind_data(cfg)
     if wind_data is None:
         logger.error('Failed to fetch data')
         return
@@ -300,24 +326,27 @@ def main():
     acc = accuracy_score(y_test, y_pred)
     logger.info(f'\n   Accuracy: {acc * 100:.2f}%')
     logger.info(f"\n{classification_report(y_test, y_pred, target_names=['Aligned', 'Misaligned'])}")
-    logger.info('\n7. Generating visualizations...')
-    visualize_mapper_graph(G, y_train, 'figures_yaw')
+    figures_subdir = ym.get("figures_subdir", "figures_yaw")
+    out_dir = _SCRIPT_DIR / figures_subdir
+    out_dir.mkdir(exist_ok=True, parents=True)
+    logger.info("\n7. Generating visualizations...")
+    visualize_mapper_graph(G, y_train, str(out_dir))
     fig, ax = plt.subplots(figsize=(10, 8))
     aligned_mask = y_test == 0
     misaligned_mask = y_test == 1
-    ax.scatter(X_test[aligned_mask, 0], X_test[aligned_mask, 1], c='green', alpha=0.5, s=30, label='Aligned', edgecolors='black', linewidths=0.5)
-    ax.scatter(X_test[misaligned_mask, 0], X_test[misaligned_mask, 1], c='red', alpha=0.5, s=30, label='Misaligned', edgecolors='black', linewidths=0.5)
-    ax.set_xlabel('Filter 1: Power Ratio', fontsize=11)
-    ax.set_ylabel('Filter 2: Rotor Speed Variability', fontsize=11)
-    ax.set_title('Filter Space: Aligned vs Misaligned Operation', fontsize=12, fontweight='bold')
+    ax.scatter(X_test[aligned_mask, 0], X_test[aligned_mask, 1], c="green", alpha=0.5, s=30, label="Aligned", edgecolors="black", linewidths=0.5)
+    ax.scatter(X_test[misaligned_mask, 0], X_test[misaligned_mask, 1], c="red", alpha=0.5, s=30, label="Misaligned", edgecolors="black", linewidths=0.5)
+    ax.set_xlabel("Filter 1: Power Ratio", fontsize=11)
+    ax.set_ylabel("Filter 2: Rotor Speed Variability", fontsize=11)
+    ax.set_title("Filter Space: Aligned vs Misaligned Operation", fontsize=12, fontweight="bold")
     ax.legend(fontsize=10)
     ax.grid(alpha=0.3)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     plt.tight_layout()
-    plt.savefig('figures_yaw/filter_space.png', dpi=300, bbox_inches='tight')
+    plt.savefig(out_dir / "filter_space.png", dpi=300, bbox_inches="tight")
     plt.close()
-    logger.info('   Saved visualizations to figures_yaw/')
+    logger.info(f"   Saved visualizations to {out_dir}/")
     logger.info('\n' + '=' * 70)
     logger.info('YAW MISALIGNMENT DETECTION COMPLETE')
     logger.info('=' * 70)
@@ -328,5 +357,9 @@ def main():
     logger.info(f'  - Temporal degradation trajectories')
     logger.info(f'  - Misalignment mechanism signatures')
     logger.info('=' * 70)
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Yaw misalignment Mapper")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)

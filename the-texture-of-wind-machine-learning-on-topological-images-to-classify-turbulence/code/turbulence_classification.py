@@ -1,10 +1,22 @@
 """
 Turbulence Intensity Classification Using Persistence Images and CNNs
-Classifies high vs low turbulence from SCADA using topological deep learning
+Classifies high vs low turbulence from SCADA using topological deep learning.
+Run from repo root: python path/to/turbulence_classification.py [--config path/to/config.yaml]
 """
+import sys
+import os
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 import requests
 from io import StringIO
 from ripser import ripser
@@ -19,21 +31,42 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 import warnings
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-warnings.filterwarnings('ignore')
-NREL_API_KEY = 'wpaaOciW3kYdcNMvRogmZEfdEueR52NS7g7Dxv0z'
-NREL_API_URL = 'https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv'
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def fetch_nrel_wind_data(lat=41.5, lon=-93.5, years=[2017]):
-    """Fetch wind data from NREL."""
+from config.load import load_config
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+warnings.filterwarnings("ignore")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def fetch_nrel_wind_data(cfg):
+    """Fetch wind data from NREL. Uses config for lat, lon, years, api_key, url, timeout."""
+    nrel = cfg.get("nrel", {})
+    lat = nrel.get("lat", 41.5)
+    lon = nrel.get("lon", -93.5)
+    years = nrel.get("years", [2017])
+    api_key = nrel.get("api_key") or os.environ.get("NREL_API_KEY", "")
+    base_url = nrel.get("base_url", "https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv")
+    timeout = nrel.get("request_timeout_seconds", 120)
+    email = nrel.get("email", "user@example.com")
+    interval = nrel.get("interval", "60")
+    attributes = nrel.get("attributes", "windspeed_100m,temperature_100m")
     all_data = []
     for year in years:
-        logger.info(f'   Fetching year {year}...')
-        params = {'api_key': NREL_API_KEY, 'wkt': f'POINT({lon} {lat})', 'attributes': 'windspeed_100m,temperature_100m', 'names': str(year), 'utc': 'true', 'leap_day': 'false', 'interval': '60', 'email': 'kyletjones@gmail.com'}
+        logger.info(f"   Fetching year {year}...")
+        params = {
+            "api_key": api_key,
+            "wkt": f"POINT({lon} {lat})",
+            "attributes": attributes,
+            "names": str(year),
+            "utc": "true",
+            "leap_day": "false",
+            "interval": interval,
+            "email": email,
+        }
         try:
-            response = requests.get(NREL_API_URL, params=params, timeout=120)
+            response = requests.get(base_url, params=params, timeout=timeout)
             response.raise_for_status()
             lines = response.text.strip().split('\n')
             data_start = 0
@@ -321,7 +354,7 @@ def train_model(model, train_loader, val_loader, num_epochs=30, learning_rate=0.
     return model
 
 def evaluate_model(model, test_loader):
-    """Evaluate the trained model."""Evaluate the trained model."""
+    """Evaluate the trained model."""
     model.eval()
     all_preds = []
     all_labels = []
@@ -342,61 +375,70 @@ def evaluate_model(model, test_loader):
     auc = roc_auc_score(all_labels, all_probs)
     return (acc, auc, all_preds, all_probs, all_labels)
 
-def main():
+def main(config_path=None):
     """
-    Perform main operation.
+    Main entry: load config and run pipeline. All parameters from config.
 
     Args:
         None
 
     Returns:
-        Result of the operation..
+        Result of the operation.
     """
-    np.random.seed(42)
-    torch.manual_seed(42)
-    logger.info('=' * 70)
-    logger.info('Turbulence Classification Using Persistence Images & CNN')
-    logger.info('=' * 70)
-    logger.info('\n1. Fetching NREL wind data...')
-    wind_data = fetch_nrel_wind_data(lat=41.5, lon=-93.5, years=[2017, 2018])
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    turb_cfg = cfg.get("turbulence", {})
+    batch_size = turb_cfg.get("batch_size", 32)
+    num_epochs = turb_cfg.get("num_epochs", 30)
+    learning_rate = turb_cfg.get("learning_rate", 0.001)
+    train_ratio = turb_cfg.get("train_ratio", 0.7)
+
+    logger.info("=" * 70)
+    logger.info("Turbulence Classification Using Persistence Images & CNN")
+    logger.info("=" * 70)
+    logger.info("\n1. Fetching NREL wind data...")
+    wind_data = fetch_nrel_wind_data(cfg)
     if wind_data is None:
-        logger.error('Failed to fetch data')
+        logger.error("Failed to fetch data")
         return
-    logger.info(f'   Total records: {len(wind_data):,}')
-    logger.info('\n2. Simulating turbulence and turbine response...')
+    logger.info(f"   Total records: {len(wind_data):,}")
+    logger.info("\n2. Simulating turbulence and turbine response...")
     df = simulate_turbulence_and_turbine(wind_data)
-    ti_low = (df['turbulence_intensity'] < 0.1).sum()
-    ti_high = (df['turbulence_intensity'] > 0.15).sum()
-    logger.info(f'   Low TI (<0.10): {ti_low} ({ti_low / len(df) * 100:.1f}%)')
-    logger.info(f'   High TI (>0.15): {ti_high} ({ti_high / len(df) * 100:.1f}%)')
-    logger.info('\n3. Creating persistence image dataset...')
+    ti_low = (df["turbulence_intensity"] < 0.1).sum()
+    ti_high = (df["turbulence_intensity"] > 0.15).sum()
+    logger.info(f"   Low TI (<0.10): {ti_low} ({ti_low / len(df) * 100:.1f}%)")
+    logger.info(f"   High TI (>0.15): {ti_high} ({ti_high / len(df) * 100:.1f}%)")
+    logger.info("\n3. Creating persistence image dataset...")
     images, labels = create_persistence_image_dataset(df, window_size=10, resolution=20)
-    logger.info('\n4. Splitting data...')
-    split_idx = int(0.7 * len(images))
+    logger.info("\n4. Splitting data...")
+    split_idx = int(train_ratio * len(images))
     X_train, X_test = (images[:split_idx], images[split_idx:])
     y_train, y_test = (labels[:split_idx], labels[split_idx:])
-    X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42, stratify=y_train)
-    logger.info(f'   Train: {len(X_train)} samples')
-    logger.info(f'   Val: {len(X_val)} samples')
-    logger.info(f'   Test: {len(X_test)} samples')
+    X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=seed, stratify=y_train)
+    logger.info(f"   Train: {len(X_train)} samples")
+    logger.info(f"   Val: {len(X_val)} samples")
+    logger.info(f"   Test: {len(X_test)} samples")
     train_dataset = PersistenceImageDataset(X_train, y_train)
     val_dataset = PersistenceImageDataset(X_val, y_val)
     test_dataset = PersistenceImageDataset(X_test, y_test)
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
-    logger.info('\n5. Training CNN...')
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    logger.info("\n5. Training CNN...")
     model = PersistenceCNN(input_channels=2, num_classes=2).to(DEVICE)
-    logger.info(f'   Using device: {DEVICE}')
-    model = train_model(model, train_loader, val_loader, num_epochs=30, learning_rate=0.001)
+    logger.info(f"   Using device: {DEVICE}")
+    model = train_model(model, train_loader, val_loader, num_epochs=num_epochs, learning_rate=learning_rate)
     logger.info('\n6. Evaluating on test set...')
     acc, auc, preds, probs, labels_true = evaluate_model(model, test_loader)
     logger.info(f'\n   Test Accuracy: {acc * 100:.2f}%')
     logger.info(f'   Test AUC: {auc:.3f}')
     logger.info(f"\n{classification_report(labels_true, preds, target_names=['Low TI', 'High TI'])}")
-    logger.info('\n7. Generating visualizations...')
-    out_dir = Path('figures_turbulence')
-    out_dir.mkdir(exist_ok=True)
+    logger.info("\n7. Generating visualizations...")
+    figures_subdir = turb_cfg.get("figures_subdir", "figures_turbulence")
+    out_dir = _SCRIPT_DIR / figures_subdir
+    out_dir.mkdir(exist_ok=True, parents=True)
     from sklearn.metrics import roc_curve
     fpr, tpr, _ = roc_curve(labels_true, probs)
     fig, ax = plt.subplots(figsize=(8, 8))
@@ -422,5 +464,9 @@ def main():
     logger.info(f'  - Adaptive control strategies')
     logger.info(f'  - Site assessment validation')
     logger.info('=' * 70)
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Turbulence classification (persistence images + CNN)")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)

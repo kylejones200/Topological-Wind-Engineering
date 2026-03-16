@@ -1,12 +1,20 @@
 """
 Wind Farm Coordination Pattern Detection Using Persistent Path Homology.
-
-Classifies coordination types from lead-lag network topology extracted from
-wind farm power output time series.
+Run from repo root: python path/to/40_farm_coordination_path_homology_blog_code.py [--config path/to/config.yaml]
 """
+import sys
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 import os
 import requests
 from io import StringIO
@@ -19,6 +27,8 @@ import networkx as nx
 import seaborn as sns
 import warnings
 import logging
+
+from config.load import load_config
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -100,47 +110,50 @@ def get_nrel_api_key() -> str:
 
 
 def fetch_nrel_wind_data(
+    cfg: Optional[Dict[str, Any]] = None,
     lat: float = 41.5,
     lon: float = -93.5,
-    years: List[int] = [2017]
+    years: Optional[List[int]] = None,
 ) -> Optional[pd.DataFrame]:
     """
-    Fetch wind data from NREL Wind Toolkit API.
-    
-    Args:
-        lat: Latitude coordinate.
-        lon: Longitude coordinate.
-        years: List of years to fetch (must be 2015-2023).
-    
-    Returns:
-        DataFrame with wind data or None if fetch fails.
-    
-    Raises:
-        ValueError: If API key is missing or years are invalid.
+    Fetch wind data from NREL. If cfg is provided, uses nrel section for lat, lon, years, api_key, base_url, timeout.
     """
-    api_key = get_nrel_api_key()
+    if cfg is not None:
+        nrel = cfg.get("nrel", {})
+        lat = nrel.get("lat", 41.5)
+        lon = nrel.get("lon", -93.5)
+        years = nrel.get("years", [2017, 2018])
+        api_key = nrel.get("api_key") or os.environ.get("NREL_API_KEY") or get_nrel_api_key()
+        base_url = nrel.get("base_url", NREL_API_URL)
+        timeout = nrel.get("request_timeout_seconds", REQUEST_TIMEOUT_SECONDS)
+    else:
+        years = years if years is not None else [2017]
+        api_key = get_nrel_api_key()
+        base_url = NREL_API_URL
+        timeout = REQUEST_TIMEOUT_SECONDS
     all_data = []
-    
+
     for year in years:
         if year < 2015 or year > 2023:
             logger.warning(f"Year {year} out of valid range (2015-2023), skipping")
             continue
-        
+
         logger.info(f"Fetching year {year}...")
+        email = (cfg.get("nrel", {}).get("email", "user@example.com")) if cfg else "kyletjones@gmail.com"
         params = {
-            'api_key': api_key,
-            'wkt': f'POINT({lon} {lat})',
-            'attributes': 'windspeed_100m,winddirection_100m',
-            'years': str(year),
-            'utc': 'true',
-            'leap_day': 'false',
-            'interval': '60',
-            'email': 'kyletjones@gmail.com'
+            "api_key": api_key,
+            "wkt": f"POINT({lon} {lat})",
+            "attributes": "windspeed_100m,winddirection_100m",
+            "years": str(year),
+            "utc": "true",
+            "leap_day": "false",
+            "interval": "60",
+            "email": email,
         }
-        
+
         try:
             response = requests.get(
-                NREL_API_URL, params=params, timeout=REQUEST_TIMEOUT_SECONDS
+                base_url, params=params, timeout=timeout
             )
             response.raise_for_status()
             
@@ -702,22 +715,23 @@ def visualize_results(
     logger.info(f"Saved feature importance to {importance_path}")
 
 
-def main() -> None:
+def main(config_path: Optional[Path] = None) -> None:
     """
-    Main execution function for wind farm coordination detection.
-    
-    Fetches data, simulates wind farm, extracts features, trains model,
-    and generates visualizations.
+    Main execution: load config, then fetch data, simulate wind farm,
+    extract features, train model, and generate visualizations.
     """
-    np.random.seed(RANDOM_SEED)
-    
-    logger.info('=' * 70)
-    logger.info('Wind Farm Coordination Detection via Path Homology')
-    logger.info('=' * 70)
-    
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    fc = cfg.get("farm_coordination", {})
+    np.random.seed(seed)
+
+    logger.info("=" * 70)
+    logger.info("Wind Farm Coordination Detection via Path Homology")
+    logger.info("=" * 70)
+
     # Fetch data
-    logger.info('\n1. Fetching NREL wind data...')
-    wind_data = fetch_nrel_wind_data(lat=41.5, lon=-93.5, years=[2017, 2018])
+    logger.info("\n1. Fetching NREL wind data...")
+    wind_data = fetch_nrel_wind_data(cfg)
     if wind_data is None:
         logger.error('Failed to fetch data')
         return
@@ -731,7 +745,7 @@ def main() -> None:
         n_turbines=DEFAULT_N_TURBINES,
         grid_size=DEFAULT_GRID_SIZE,
         spacing_m=DEFAULT_SPACING_M,
-        random_seed=RANDOM_SEED
+        random_seed=seed
     )
     logger.info(f'Simulated {power_outputs.shape[0]:,} timesteps')
     
@@ -776,7 +790,7 @@ def main() -> None:
     clf = RandomForestClassifier(
         n_estimators=N_ESTIMATORS,
         max_depth=MAX_DEPTH,
-        random_state=RANDOM_SEED
+        random_state=seed
     )
     clf.fit(X_train_scaled, y_train)
     y_pred = clf.predict(X_test_scaled)
@@ -800,10 +814,12 @@ def main() -> None:
         logger.info(f'  {fname}: {imp:.4f}')
     
     # Visualize
-    logger.info('\n7. Generating visualizations...')
+    logger.info("\n7. Generating visualizations...")
+    figures_subdir = fc.get("figures_subdir", "figures_coordination")
+    out_dir = _SCRIPT_DIR / figures_subdir
     visualize_results(
         y_test, y_pred, feature_importance, feature_names,
-        Path('figures_coordination')
+        out_dir
     )
     
     # Summary
@@ -822,5 +838,9 @@ def main() -> None:
     logger.info('=' * 70)
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Wind farm coordination detection (path homology)")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)

@@ -1,13 +1,22 @@
 """
-Topological Data Analysis of Wind Turbine SCADA Data
-Using real NREL Wind Toolkit data via API
-
-This version fetches authentic wind resource data from NREL's Wind Toolkit API
-and simulates realistic turbine operating characteristics.
+Topological Data Analysis of Wind Turbine SCADA Data (NREL API).
+Run from repo root: python path/to/turbine_tda_nrel_api.py [--config path/to/config.yaml]
 """
+import sys
+import os
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 import requests
 from io import StringIO
 from sklearn.preprocessing import StandardScaler
@@ -18,15 +27,14 @@ from sklearn.metrics import roc_auc_score
 import matplotlib.pyplot as plt
 from ripser import ripser
 from persim import plot_diagrams
-import sys
-from pathlib import Path
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from config.load import load_config
 from tda_utils import setup_tufte_plot, TufteColors
-NREL_API_KEY = 'wpaaOciW3kYdcNMvRogmZEfdEueR52NS7g7Dxv0z'
-NREL_API_URL = 'https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv'
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
 
 def tufte_style(ax):
     """Apply minimalist Tufte-inspired styling."""
@@ -36,26 +44,24 @@ def tufte_style(ax):
     ax.spines['left'].set_position(('outward', 6))
     ax.spines['bottom'].set_position(('outward', 6))
 
-def fetch_nrel_wind_data(lat=41.0, lon=-95.5, years=[2017, 2018, 2019]):
-    """
-    Fetch real wind data from NREL Wind Toolkit API for multiple years.
-    
-    Default location: Central Iowa (strong wind resource region)
-    
-    Args:
-        lat: Latitude
-        lon: Longitude  
-        years: List of years (2015-2023 available)
-    
-    Returns:
-        DataFrame with wind data
-    """
+def fetch_nrel_wind_data(cfg):
+    """Fetch real wind data from NREL. Uses config for lat, lon, years, api_key, url, timeout."""
+    nrel = cfg.get("nrel", {})
+    lat = nrel.get("lat", 41.0)
+    lon = nrel.get("lon", -95.5)
+    years = nrel.get("years", [2017, 2018, 2019])
+    api_key = nrel.get("api_key") or os.environ.get("NREL_API_KEY", "")
+    base_url = nrel.get("base_url", "https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv")
+    timeout = nrel.get("request_timeout_seconds", 120)
+    email = nrel.get("email", "user@example.com")
+    interval = nrel.get("interval", "60")
+    attributes = nrel.get("attributes", "windspeed_100m,windspeed_80m,temperature_100m")
     all_data = []
     for year in years:
-        logger.info(f'   Fetching year {year}...')
-        params = {'api_key': NREL_API_KEY, 'wkt': f'POINT({lon} {lat})', 'attributes': 'windspeed_100m,windspeed_80m,temperature_100m', 'names': str(year), 'utc': 'true', 'leap_day': 'false', 'interval': '60', 'email': 'kyletjones@gmail.com'}
+        logger.info(f"   Fetching year {year}...")
+        params = {"api_key": api_key, "wkt": f"POINT({lon} {lat})", "attributes": attributes, "names": str(year), "utc": "true", "leap_day": "false", "interval": interval, "email": email}
         try:
-            response = requests.get(NREL_API_URL, params=params, timeout=120)
+            response = requests.get(base_url, params=params, timeout=timeout)
             response.raise_for_status()
             lines = response.text.strip().split('\n')
             data_start = 0
@@ -219,26 +225,31 @@ def evaluate_model(X_train, y_train, X_test, y_test, model):
     acc = ((p > 0.5).astype(int) == y_test).mean()
     return (auc, acc)
 
-def main():
+def main(config_path=None):
     """
     Main.
 
     Returns:
         Description of return value.
     """
-    np.random.seed(0)
-    out_dir = Path('figures')
-    out_dir.mkdir(exist_ok=True)
-    logger.info('=' * 60)
-    logger.info('Topological Data Analysis of Wind Turbine SCADA')
-    logger.info('Using real NREL Wind Toolkit data via API')
-    logger.info('=' * 60)
-    logger.info('\n1. Fetching real wind resource data from NREL...')
-    logger.info('   Location: Central Iowa (41.0°N, 95.5°W)')
-    logger.info('   Years: 2017-2019 (3 years)')
-    logger.info('   Source: NREL Wind Toolkit BC-HRRR dataset')
-    logger.info('   Reference: https://developer.nrel.gov/docs/wind/wind-toolkit/')
-    wind_data = fetch_nrel_wind_data(lat=41.0, lon=-95.5, years=[2017, 2018, 2019])
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    rt = cfg.get("regime_tda", {})
+    np.random.seed(seed)
+    figures_subdir = rt.get("figures_subdir", "figures")
+    out_dir = _SCRIPT_DIR / figures_subdir
+    out_dir.mkdir(exist_ok=True, parents=True)
+    logger.info("=" * 60)
+    logger.info("Topological Data Analysis of Wind Turbine SCADA")
+    logger.info("Using real NREL Wind Toolkit data via API")
+    logger.info("=" * 60)
+    nrel = cfg.get("nrel", {})
+    logger.info("\n1. Fetching real wind resource data from NREL...")
+    logger.info(f"   Location: ({nrel.get('lat', 41.0)}°N, {nrel.get('lon', -95.5)}°W)")
+    logger.info(f"   Years: {nrel.get('years', [2017, 2018, 2019])}")
+    logger.info("   Source: NREL Wind Toolkit BC-HRRR dataset")
+    logger.info("   Reference: https://developer.nrel.gov/docs/wind/wind-toolkit/")
+    wind_data = fetch_nrel_wind_data(cfg)
     if wind_data is not None:
         df = simulate_turbine_from_wind(wind_data)
         data_source = 'NREL Wind Toolkit API (real wind data)'
@@ -250,8 +261,9 @@ def main():
     logger.info(f"   Wind speed range: {df['wind_speed'].min():.1f} - {df['wind_speed'].max():.1f} m/s")
     logger.info(f"   Power range: {df['power'].min():.1f} - {df['power'].max():.1f} kW")
     logger.info('\n2. Creating non-overlapping windows...')
-    Xw, y, t = make_nonoverlapping_windows(df, win_size=256)
-    logger.info(f'   Created {len(Xw)} windows of 256 samples each (~11 days per window)')
+    win_size = rt.get("win_size", 256)
+    Xw, y, t = make_nonoverlapping_windows(df, win_size=win_size)
+    logger.info(f"   Created {len(Xw)} windows of {win_size} samples each (~11 days per window)")
     logger.info(f'   Label distribution: {(y == 0).sum()} low-power, {(y == 1).sum()} high-power')
     logger.info('\n3. Building phase portrait...')
     X_flat = Xw.reshape(-1, 3)
@@ -294,7 +306,9 @@ def main():
     logger.info('   b) PCA features (baseline)...')
     X_pca = build_pca_matrix(Xw)
     logger.info('\n6. Evaluating with purged forward cross-validation...')
-    splits = purged_forward_splits(t, n_splits=6, purge_windows=1)
+    n_splits = rt.get("n_splits_analysis", 6)
+    purge_windows = rt.get("purge_windows", 1)
+    splits = purged_forward_splits(t, n_splits=n_splits, purge_windows=purge_windows)
     logger.info(f'   Using {len(splits)} folds with 1-window purge gap')
     logger.info('   This prevents temporal leakage between train and test sets')
     results = {'TDA + LogReg': [], 'PCA + LogReg': [], 'PCA + SVM-Lin': [], 'PCA + SVM-RBF': []}
@@ -303,14 +317,14 @@ def main():
         Xt_tr, Xt_te = (X_tda[train_idx], X_tda[test_idx])
         Xp_tr, Xp_te = (X_pca[train_idx], X_pca[test_idx])
         y_tr, y_te = (y[train_idx], y[test_idx])
-        auc, acc = evaluate_model(Xt_tr, y_tr, Xt_te, y_te, LogisticRegression(max_iter=1000, random_state=0))
-        results['TDA + LogReg'].append((auc, acc))
-        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, LogisticRegression(max_iter=1000, random_state=0))
-        results['PCA + LogReg'].append((auc, acc))
-        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, SVC(kernel='linear', probability=True, random_state=0))
-        results['PCA + SVM-Lin'].append((auc, acc))
-        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, SVC(kernel='rbf', probability=True, random_state=0))
-        results['PCA + SVM-RBF'].append((auc, acc))
+        auc, acc = evaluate_model(Xt_tr, y_tr, Xt_te, y_te, LogisticRegression(max_iter=1000, random_state=seed))
+        results["TDA + LogReg"].append((auc, acc))
+        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, LogisticRegression(max_iter=1000, random_state=seed))
+        results["PCA + LogReg"].append((auc, acc))
+        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, SVC(kernel="linear", probability=True, random_state=seed))
+        results["PCA + SVM-Lin"].append((auc, acc))
+        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, SVC(kernel="rbf", probability=True, random_state=seed))
+        results["PCA + SVM-RBF"].append((auc, acc))
     logger.info('\n' + '=' * 60)
     logger.info('RESULTS (averaged across folds)')
     logger.info('=' * 60)
@@ -337,5 +351,9 @@ def main():
     logger.info('  Turbine simulation: Generic 2MW wind turbine response')
     logger.info('\nAnalysis complete!')
     logger.info(f'Figures saved to: {out_dir.absolute()}/')
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="TDA with NREL Wind Toolkit API")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)

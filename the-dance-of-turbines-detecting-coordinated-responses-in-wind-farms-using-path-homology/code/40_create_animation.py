@@ -1,23 +1,35 @@
+"""
+Create farm coordination animation. Run from repo root: python path/to/40_create_animation.py [--config path/to/config.yaml]
+"""
+import sys
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from matplotlib.gridspec import GridSpec
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+from config.load import load_config
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-np.random.seed(42)
-FPS, N_FRAMES = (10, 100)
+
+FPS_DEFAULT, N_FRAMES_DEFAULT = (10, 100)
 n_turbines = 25
 x_pos = np.repeat(np.arange(5), 5)
 y_pos = np.tile(np.arange(5), 5)
-fig = plt.figure(figsize=(14, 8), facecolor='white')
-gs = GridSpec(2, 2, figure=fig, hspace=0.3, wspace=0.3)
-ax1, ax2, ax3 = (fig.add_subplot(gs[0, :]), fig.add_subplot(gs[1, 0]), fig.add_subplot(gs[1, 1]))
-for ax in [ax1, ax2, ax3]:
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
 
-def update(frame):
+
+def update(ax1, ax2, ax3, frame, N_FRAMES):
     """
     Perform update operation.
 
@@ -69,10 +81,45 @@ def update(frame):
     ax3.set_xlim(0, 1)
     ax3.set_ylim(0, 1)
     ax3.axis('off')
-    ax3.set_title('Farm Status', fontsize=11, fontweight='normal')
+    ax3.set_title("Farm Status", fontsize=11, fontweight="normal")
     return []
-logger.info('Creating animation for Article 40...')
-anim = animation.FuncAnimation(fig, update, frames=N_FRAMES, interval=1000 / FPS, blit=True, repeat=True)
-anim.save('40_farm_coordination_animation.gif', writer='pillow', fps=FPS, dpi=100)
-logger.info('✓ Animation saved: 40_farm_coordination_animation.gif')
-plt.close()
+
+
+def main(config_path=None):
+    """Load config, build animation, save to output path."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    fc = cfg.get("farm_coordination", {})
+    FPS = fc.get("animation_fps", FPS_DEFAULT)
+    N_FRAMES = fc.get("animation_frames", N_FRAMES_DEFAULT)
+    figures_subdir = fc.get("figures_subdir", "figures_coordination")
+    out_dir = _SCRIPT_DIR / figures_subdir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "40_farm_coordination_animation.gif"
+
+    fig = plt.figure(figsize=(14, 8), facecolor="white")
+    gs = GridSpec(2, 2, figure=fig, hspace=0.3, wspace=0.3)
+    ax1 = fig.add_subplot(gs[0, :])
+    ax2 = fig.add_subplot(gs[1, 0])
+    ax3 = fig.add_subplot(gs[1, 1])
+    for ax in [ax1, ax2, ax3]:
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    def _update(frame):
+        return update(ax1, ax2, ax3, frame, N_FRAMES)
+
+    logger.info("Creating farm coordination animation...")
+    anim = animation.FuncAnimation(fig, _update, frames=N_FRAMES, interval=1000 / FPS, blit=True, repeat=True)
+    anim.save(str(out_path), writer="pillow", fps=FPS, dpi=100)
+    logger.info(f"✓ Animation saved: {out_path}")
+    plt.close()
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Create farm coordination animation")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)

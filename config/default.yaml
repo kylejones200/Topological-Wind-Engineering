@@ -1,0 +1,92 @@
+# Topological-Wind-Engineering default configuration
+# Override with CONFIG_PATH or --config. All code runs from this config; no magic numbers in scripts.
+
+global:
+  random_seed: 42
+  output_dir: "figures"
+  log_level: "INFO"
+
+nrel:
+  lat: 41.5
+  lon: -100.5
+  years: [2010, 2011, 2012]
+  api_key: ""  # set via NREL_API_KEY env or here
+  base_url: "https://developer.nrel.gov/api/wind-toolkit/v2/wind/wtk-bchrrr-v1-0-0-download.csv"
+  request_timeout_seconds: 120
+  email: "user@example.com"
+  interval: "60"
+  attributes: "windspeed_100m,winddirection_100m,temperature_100m"
+
+# Simulation parameters used across modules
+simulation:
+  window_size: 288
+  n_windows: 120
+  n_turbines: 6
+  cut_in_wind_speed: 3.0
+  rated_wind_speed: 12.0
+  cut_out_wind_speed: 25.0
+  rated_power_kw: 2000
+  power_curve_exponent: 2.5
+  min_correlation_threshold: 0.3
+  max_lag_samples: 10
+
+# Farm coordination (path homology)
+farm_coordination:
+  test_size: 0.3
+  n_estimators: 100
+  figures_subdir: "figures_coordination"
+
+# Wake detection
+wake_detection:
+  figures_subdir: "figures_wake"
+  test_size: 0.3
+  n_estimators: 100
+  seasonal_amplitude: 2.0
+  diurnal_amplitude: 1.5
+  base_windspeed: 8.5
+  wake_wind_factor_min: 0.6
+  wake_wind_factor_max: 0.7
+  hysteresis_alpha: 0.7
+
+# Yaw mapper
+yaw_mapper:
+  window_size: 10
+  n_bins: 10
+  overlap: 0.5
+  n_clusters: 2
+  train_ratio: 0.7
+  misalignment_prob: 0.05
+  misalignment_duration_min: 2
+  misalignment_duration_max: 24
+  misalignment_angle_mean: 10
+  misalignment_angle_std: 5
+  misalignment_angle_max: 25
+  rotor_inertia: 0.85
+  power_inertia: 0.75
+  figures_subdir: "figures_yaw"
+
+# Regime transition (zigzag persistence)
+regime_transition:
+  figures_subdir: "figures_transitions"
+  train_ratio: 0.7
+  lead_time_minutes: 15
+
+# Turbulence classification (persistence images + CNN)
+turbulence:
+  figures_subdir: "figures_turbulence"
+  train_ratio: 0.7
+  batch_size: 32
+  num_epochs: 30
+  learning_rate: 0.001
+
+# Regime / TDA fault scripts (shared)
+regime_tda:
+  win_size: 256
+  win_size_analysis: 512
+  purge_windows: 1
+  n_splits: 5
+  n_splits_analysis: 6
+  n_components_pca: 2
+  n_components_pca_3: 3
+  figures_subdir: "figures"
+  sample_size_diagram: 8000

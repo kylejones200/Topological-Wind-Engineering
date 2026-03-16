@@ -1,13 +1,21 @@
 """
-Topological Data Analysis of Wind Turbine SCADA Data
-Using synthetic data that mimics real turbine operating cycles
-
-This version generates synthetic turbine data to demonstrate the TDA methodology
-without requiring external data dependencies.
+Topological Data Analysis of Wind Turbine SCADA Data (synthetic).
+Run from repo root: python path/to/turbine_tda_synthetic.py [--config path/to/config.yaml]
 """
+import sys
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR
+for _ in range(15):
+    if (_REPO_ROOT / "config" / "default.yaml").is_file() or (_REPO_ROOT / "pyproject.toml").is_file():
+        break
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
@@ -16,13 +24,13 @@ from sklearn.metrics import roc_auc_score
 import matplotlib.pyplot as plt
 from ripser import ripser
 from persim import plot_diagrams
-import sys
-from pathlib import Path
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from config.load import load_config
 from tda_utils import setup_tufte_plot, TufteColors
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 def tufte_style(ax):
     """Apply minimalist Tufte-inspired styling."""
@@ -170,28 +178,30 @@ def evaluate_model(X_train, y_train, X_test, y_test, model):
     acc = ((p > 0.5).astype(int) == y_test).mean()
     return (auc, acc)
 
-def main():
-    """
-    Main.
-
-    Returns:
-        Description of return value.
-    """
-    np.random.seed(0)
-    out_dir = Path('figures')
-    out_dir.mkdir(exist_ok=True)
-    logger.info('=' * 60)
-    logger.info('Topological Data Analysis of Wind Turbine SCADA')
-    logger.info('Using synthetic data with realistic operating cycles')
-    logger.info('=' * 60)
-    logger.info('\n1. Generating synthetic turbine data...')
-    df = generate_synthetic_turbine_data(n_samples=50000, seed=42)
-    logger.info(f'   Generated {len(df):,} records (~1 year at 10-min resolution)')
+def main(config_path=None):
+    """Main entry: load config and run pipeline."""
+    cfg = load_config(config_path)
+    rt = cfg.get("regime_tda", {})
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    win_size = rt.get("win_size_analysis", 512)
+    n_splits = rt.get("n_splits_analysis", 6)
+    purge_windows = rt.get("purge_windows", 1)
+    figures_subdir = rt.get("figures_subdir", "figures")
+    out_dir = _SCRIPT_DIR / figures_subdir
+    out_dir.mkdir(exist_ok=True, parents=True)
+    logger.info("=" * 60)
+    logger.info("Topological Data Analysis of Wind Turbine SCADA")
+    logger.info("Using synthetic data with realistic operating cycles")
+    logger.info("=" * 60)
+    logger.info("\n1. Generating synthetic turbine data...")
+    df = generate_synthetic_turbine_data(n_samples=50000, seed=seed)
+    logger.info(f"   Generated {len(df):,} records (~1 year at 10-min resolution)")
     logger.info(f"   Wind speed range: {df['wind_speed'].min():.1f} - {df['wind_speed'].max():.1f} m/s")
     logger.info(f"   Power range: {df['power'].min():.1f} - {df['power'].max():.1f} kW")
-    logger.info('\n2. Creating non-overlapping windows...')
-    Xw, y, t = make_nonoverlapping_windows(df, win_size=512)
-    logger.info(f'   Created {len(Xw)} windows of 512 samples each')
+    logger.info("\n2. Creating non-overlapping windows...")
+    Xw, y, t = make_nonoverlapping_windows(df, win_size=win_size)
+    logger.info(f"   Created {len(Xw)} windows of {win_size} samples each")
     logger.info(f'   Label distribution: {(y == 0).sum()} low-power, {(y == 1).sum()} high-power')
     logger.info('\n3. Building phase portrait...')
     X_flat = Xw.reshape(-1, 3)
@@ -234,8 +244,8 @@ def main():
     logger.info('   b) PCA features (baseline)...')
     X_pca = build_pca_matrix(Xw)
     logger.info('\n6. Evaluating with purged forward cross-validation...')
-    splits = purged_forward_splits(t, n_splits=6, purge_windows=1)
-    logger.info(f'   Using {len(splits)} folds with 1-window purge gap')
+    splits = purged_forward_splits(t, n_splits=n_splits, purge_windows=purge_windows)
+    logger.info(f"   Using {len(splits)} folds with {purge_windows}-window purge gap")
     logger.info('   This prevents temporal leakage between train and test sets')
     results = {'TDA + LogReg': [], 'PCA + LogReg': [], 'PCA + SVM-Lin': [], 'PCA + SVM-RBF': []}
     for fold_idx, (train_idx, test_idx) in enumerate(splits):
@@ -243,14 +253,14 @@ def main():
         Xt_tr, Xt_te = (X_tda[train_idx], X_tda[test_idx])
         Xp_tr, Xp_te = (X_pca[train_idx], X_pca[test_idx])
         y_tr, y_te = (y[train_idx], y[test_idx])
-        auc, acc = evaluate_model(Xt_tr, y_tr, Xt_te, y_te, LogisticRegression(max_iter=1000, random_state=0))
-        results['TDA + LogReg'].append((auc, acc))
-        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, LogisticRegression(max_iter=1000, random_state=0))
-        results['PCA + LogReg'].append((auc, acc))
-        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, SVC(kernel='linear', probability=True, random_state=0))
-        results['PCA + SVM-Lin'].append((auc, acc))
-        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, SVC(kernel='rbf', probability=True, random_state=0))
-        results['PCA + SVM-RBF'].append((auc, acc))
+        auc, acc = evaluate_model(Xt_tr, y_tr, Xt_te, y_te, LogisticRegression(max_iter=1000, random_state=seed))
+        results["TDA + LogReg"].append((auc, acc))
+        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, LogisticRegression(max_iter=1000, random_state=seed))
+        results["PCA + LogReg"].append((auc, acc))
+        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, SVC(kernel="linear", probability=True, random_state=seed))
+        results["PCA + SVM-Lin"].append((auc, acc))
+        auc, acc = evaluate_model(Xp_tr, y_tr, Xp_te, y_te, SVC(kernel="rbf", probability=True, random_state=seed))
+        results["PCA + SVM-RBF"].append((auc, acc))
     logger.info('\n' + '=' * 60)
     logger.info('RESULTS (averaged across folds)')
     logger.info('=' * 60)
@@ -272,5 +282,9 @@ def main():
     logger.info('=' * 60)
     logger.info('\nAnalysis complete!')
     logger.info(f'Figures saved to: {out_dir.absolute()}/')
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="TDA with synthetic turbine data")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    main(config_path=args.config)
