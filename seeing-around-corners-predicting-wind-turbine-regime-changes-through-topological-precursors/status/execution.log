@@ -1,0 +1,73 @@
+======================================================================
+Regime Transition Prediction Using Zigzag Persistence
+======================================================================
+
+1. Fetching NREL wind data...
+   Fetching year 2017...
+     ✗ Error: name 'all_years' is not defined
+   Fetching year 2018...
+     ✗ Error: name 'all_years' is not defined
+   Fetching year 2019...
+     ✗ Error: name 'all_years' is not defined
+Traceback (most recent call last):
+  File "/Users/k.jones/Documents/blogs/blog_posts/36_regime_transitions_zigzag/regime_transition.py", line 575, in <module>
+    main()
+  File "/Users/k.jones/Documents/blogs/blog_posts/36_regime_transitions_zigzag/regime_transition.py", line 454, in main
+    wind_data = fetch_nrel_wind_data(lat=41.5, lon=-93.5, years=[2017, 2018, 2019])
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/k.jones/Documents/blogs/blog_posts/36_regime_transitions_zigzag/regime_transition.py", line 69, in fetch_nrel_wind_data
+    if not all_years:
+           ^^^^^^^^^
+NameError: name 'all_years' is not defined
+======================================================================
+Regime Transition Prediction Using Zigzag Persistence
+======================================================================
+
+1. Fetching NREL wind data...
+   Fetching year 2017...
+     ✓ Fetched 8,760 records
+   Fetching year 2018...
+     ✓ Fetched 8,760 records
+   Fetching year 2019...
+     ✓ Fetched 8,760 records
+   Total records: 26,280
+
+2. Simulating turbine operation...
+   Idle: 3,288 records (12.5%)
+   Startup: 2,160 records (8.2%)
+   Ramp-up: 18,973 records (72.2%)
+   Rated: 1,859 records (7.1%)
+
+3. Detecting regime transitions...
+   Found 667 transitions
+   Transition types:
+     Startup → Ramp-up: 247
+     Rated → Ramp-up: 187
+     Idle → Ramp-up: 142
+     Ramp-up → Idle: 49
+     Ramp-up → Rated: 37
+     Startup → Idle: 3
+     Rated → Idle: 1
+     Idle → Rated: 1
+
+4. Creating dataset with zigzag persistence features...
+
+   Creating dataset...
+     Positive samples (pre-transition): 665
+     Negative samples (stable periods): 181
+   Dataset shape: (846, 15)
+   Transitions (positive): 665 (78.6%)
+   Stable (negative): 181 (21.4%)
+
+5. Splitting data chronologically...
+
+6. Training classifiers...
+
+   Training Random Forest...
+Traceback (most recent call last):
+  File "/Users/k.jones/Documents/blogs/blog_posts/36_regime_transitions_zigzag/regime_transition.py", line 575, in <module>
+    main()
+  File "/Users/k.jones/Documents/blogs/blog_posts/36_regime_transitions_zigzag/regime_transition.py", line 521, in main
+    y_prob = model.predict_proba(X_test_scaled)[:, 1] if hasattr(model, 'predict_proba') else model.decision_function(X_test_scaled)
+             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+IndexError: index 1 is out of bounds for axis 1 with size 1

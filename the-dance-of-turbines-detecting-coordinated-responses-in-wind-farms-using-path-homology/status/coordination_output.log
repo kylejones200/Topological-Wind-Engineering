@@ -1,0 +1,86 @@
+============================================================
+WIND FARM COORDINATION PATTERN DETECTION
+Persistent Path Homology on Directed Lead-Lag Networks
+============================================================
+Simulating NREL wind data fetch for location (41.5, -100.5)
+Fetched 315360 records spanning 3 years
+
+Creating 120 labeled windows (wake/grid/oscillatory)...
+Created 40 wake, 40 grid, 40 oscillatory windows
+
+Extracting path homology features from directed networks...
+  Processing window 1/120
+  Processing window 21/120
+  Processing window 41/120
+  Processing window 61/120
+  Processing window 81/120
+  Processing window 101/120
+
+Feature matrix: (120, 27)
+Label distribution: Wake=40, Grid=40, Oscillatory=40
+
+============================================================
+TRAINING AND EVALUATION
+============================================================
+
+Train set: 84 samples
+Test set: 36 samples
+
+Logistic Regression:
+  Accuracy: 0.806
+  F1 (macro): 0.796
+  F1 (weighted): 0.796
+
+SVM (RBF):
+  Accuracy: 0.444
+  F1 (macro): 0.348
+  F1 (weighted): 0.348
+
+Random Forest:
+  Accuracy: 0.889
+  F1 (macro): 0.888
+  F1 (weighted): 0.888
+
+Gradient Boosting:
+  Accuracy: 0.861
+  F1 (macro): 0.859
+  F1 (weighted): 0.859
+
+============================================================
+GENERATING VISUALIZATIONS
+============================================================
+
+1. Model comparison...
+  Saved: model_comparison.png
+2. Network structure examples...
+  Saved: network_structures.png
+3. Cycle count distribution...
+  Saved: cycle_distribution.png
+4. Feature importance...
+  Saved: feature_importance.png
+
+All visualizations generated successfully!
+
+============================================================
+FINAL SUMMARY
+============================================================
+
+Best Model: Random Forest
+  Accuracy: 0.889
+  F1 (macro): 0.888
+
+Classification Report:
+                  precision    recall  f1-score   support
+
+Wake Propagation       1.00      1.00      1.00        12
+      Grid Event       0.79      0.92      0.85        12
+     Oscillatory       0.90      0.75      0.82        12
+
+        accuracy                           0.89        36
+       macro avg       0.90      0.89      0.89        36
+    weighted avg       0.90      0.89      0.89        36
+
+
+Visualizations saved to: /Users/k.jones/Documents/blogs/blog_posts/40_farm_coordination_path_homology/figures_coordination/
+
+Analysis complete!
