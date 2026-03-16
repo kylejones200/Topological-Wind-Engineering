@@ -393,23 +393,31 @@ def generate_visualizations(windows: List[pd.DataFrame], labels: np.ndarray, X: 
     logger.info(f'  Saved: h1_feature_distributions.png')
     logger.info('\nAll visualizations generated successfully!')
 
-def main(config_path=None):
-    """Main entry: load config and run pipeline. All parameters from config."""
-    cfg = load_config(config_path)
-    seed = cfg.get("global", {}).get("random_seed", 42)
-    np.random.seed(seed)
-
+def _log_banner():
+    """Log pipeline header."""
     logger.info("=" * 60)
     logger.info("WAKE DETECTION USING PERSISTENT HOMOLOGY")
     logger.info("=" * 60)
+
+
+def _fetch_and_prepare(cfg):
+    """Fetch wind data, create wake scenarios, extract features. Returns (windows, labels, X, y) or None."""
     df = fetch_nrel_wind_data(cfg)
+    if df is None or len(df) == 0:
+        return None
     windows, labels = create_wake_scenarios(df, cfg)
     X, y = extract_all_features(windows, labels)
-    results, X_train, X_test, y_train, y_test = train_and_evaluate_models(X, y, cfg)
+    return windows, labels, X, y
+
+
+def _get_figures_out_dir(cfg):
+    """Resolve figures subdir from config. Returns Path."""
     wd_cfg = cfg.get("wake_detection", {})
-    figures_subdir = wd_cfg.get("figures_subdir", "figures_wake")
-    out_dir = _SCRIPT_DIR / figures_subdir
-    generate_visualizations(windows, labels, X, y, results, X_test, y_test, out_dir)
+    return _SCRIPT_DIR / wd_cfg.get("figures_subdir", "figures_wake")
+
+
+def _log_classification_summary(results, out_dir):
+    """Log best model summary and classification report."""
     best_model_name = max(results.keys(), key=lambda k: results[k]["accuracy"])
     print_classification_summary(results, best_model_name)
     logger.info("\nClassification Report:")
@@ -423,6 +431,24 @@ def main(config_path=None):
     )
     logger.info(f"\nVisualizations saved to: {out_dir}/")
     logger.info("\nAnalysis complete!")
+
+
+def main(config_path=None):
+    """Main entry: load config and run pipeline. All parameters from config."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+
+    _log_banner()
+    prepared = _fetch_and_prepare(cfg)
+    if prepared is None:
+        logger.error("Failed to fetch wind data or no data returned.")
+        return
+    windows, labels, X, y = prepared
+    results, X_train, X_test, y_train, y_test = train_and_evaluate_models(X, y, cfg)
+    out_dir = _get_figures_out_dir(cfg)
+    generate_visualizations(windows, labels, X, y, results, X_test, y_test, out_dir)
+    _log_classification_summary(results, out_dir)
 
 
 if __name__ == "__main__":

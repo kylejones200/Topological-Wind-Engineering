@@ -231,17 +231,12 @@ def evaluate_model(X_train, y_train, X_test, y_test, model):
     acc = ((p > 0.5).astype(int) == y_test).mean()
     return (auc, acc)
 
-def main(config_path=None):
-    """Main analysis workflow. All parameters from config."""
-    cfg = load_config(config_path)
+def _run_data_and_plots(cfg):
+    """Load SCADA, build windows, phase portrait, persistence diagram, extract TDA/PCA. Returns (X_tda, X_pca, y, t, out_dir, seed, rt)."""
     rt = cfg.get("regime_tda", {})
     seed = cfg.get("global", {}).get("random_seed", 42)
-    np.random.seed(seed)
     win_size = rt.get("win_size_analysis", 512)
-    n_splits = rt.get("n_splits_analysis", 6)
-    purge_windows = rt.get("purge_windows", 1)
-    figures_subdir = rt.get("figures_subdir", "figures")
-    out_dir = _SCRIPT_DIR / figures_subdir
+    out_dir = _SCRIPT_DIR / rt.get("figures_subdir", "figures")
     out_dir.mkdir(exist_ok=True, parents=True)
     logger.info("=" * 60)
     logger.info("Topological Data Analysis of Wind Turbine SCADA")
@@ -286,13 +281,19 @@ def main(config_path=None):
     if len(dgms) > 1 and dgms[1].size > 0:
         L = lifetimes(dgms[1])
         if L.size > 0:
-            max_h1 = L.max()
-            logger.info(f'   Max H1 persistence (loop strength): {max_h1:.4f}')
+            logger.info(f'   Max H1 persistence (loop strength): {L.max():.4f}')
     logger.info('\n5. Extracting features...')
     logger.info('   a) TDA features (persistent homology)...')
     X_tda = build_tda_matrix(Xw)
     logger.info('   b) PCA features (baseline)...')
     X_pca = build_pca_matrix(Xw)
+    return (X_tda, X_pca, y, t, out_dir, seed, rt)
+
+
+def _run_cv_and_log(X_tda, X_pca, y, t, seed, rt, out_dir):
+    """Run purged forward CV, log results and leakage summary."""
+    n_splits = rt.get("n_splits_analysis", 6)
+    purge_windows = rt.get("purge_windows", 1)
     logger.info("\n6. Evaluating with purged forward cross-validation...")
     splits = purged_forward_splits(t, n_splits=n_splits, purge_windows=purge_windows)
     logger.info(f"   Using {len(splits)} folds with {purge_windows}-window purge gap")
@@ -318,9 +319,7 @@ def main(config_path=None):
     logger.info('-' * 60)
     for name, scores in results.items():
         arr = np.array(scores)
-        auc_mean = arr[:, 0].mean()
-        acc_mean = arr[:, 1].mean()
-        logger.info(f'{name:<20} {auc_mean:>10.3f} {acc_mean:>10.3f}')
+        logger.info(f'{name:<20} {arr[:, 0].mean():>10.3f} {arr[:, 1].mean():>10.3f}')
     logger.info('=' * 60)
     logger.info('\n' + '=' * 60)
     logger.info('LEAKAGE PREVENTION SUMMARY')
@@ -332,6 +331,16 @@ def main(config_path=None):
     logger.info('=' * 60)
     logger.info('\nAnalysis complete!')
     logger.info(f'Figures saved to: {out_dir.absolute()}/')
+
+
+def main(config_path=None):
+    """Main analysis workflow. All parameters from config."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    X_tda, X_pca, y, t, out_dir, seed, rt = _run_data_and_plots(cfg)
+    _run_cv_and_log(X_tda, X_pca, y, t, seed, rt, out_dir)
+
 
 if __name__ == "__main__":
     import argparse

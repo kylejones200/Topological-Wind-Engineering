@@ -254,12 +254,10 @@ def evaluate_model(X_train, y_train, X_test, y_test, model):
     f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0
     return (auc, acc, precision, recall, f1)
 
-def main(config_path=None):
-    """Main entry: load config and run pipeline."""
-    cfg = load_config(config_path)
+def _run_enhanced_pipeline(cfg):
+    """Fetch data, build advanced windows/features, run multi-label multi-model CV, log best results. Uses seed from config."""
     seed = cfg.get("global", {}).get("random_seed", 42)
     rt = cfg.get("regime_tda", {})
-    np.random.seed(seed)
     figures_subdir = rt.get("figures_subdir", "figures")
     out_dir = _SCRIPT_DIR / figures_subdir
     out_dir.mkdir(exist_ok=True, parents=True)
@@ -361,6 +359,16 @@ def main(config_path=None):
     logger.info('- Capacity factor labeling may be more meaningful than median split')
     logger.info('- Ensemble methods (RF, GradBoost) handle complex feature interactions')
     logger.info('- Combined TDA+PCA features leverage both topological and geometric structure')
+
+
+def main(config_path=None):
+    """Main entry: load config and run pipeline."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    _run_enhanced_pipeline(cfg)
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Enhanced TDA of wind turbine SCADA")

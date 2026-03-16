@@ -387,27 +387,33 @@ def generate_visualizations(windows, labels, X, y, results, out_dir, cfg):
     logger.info("\nAll visualizations generated successfully!")
 
 
-def main(config_path=None):
-    """Main entry: load config and run pipeline. No magic numbers; all from config."""
-    cfg = load_config(config_path)
-    seed = cfg.get("global", {}).get("random_seed", 42)
-    np.random.seed(seed)
-
+def _log_banner():
+    """Log pipeline header."""
     logger.info("=" * 60)
     logger.info("WIND FARM COORDINATION PATTERN DETECTION")
     logger.info("Persistent Path Homology on Directed Lead-Lag Networks")
     logger.info("=" * 60)
 
+
+def _fetch_and_prepare_data(cfg):
+    """Fetch wind data, create scenarios, extract features. Returns (windows, labels, X, y) or None on fetch failure."""
     df = fetch_nrel_wind_data(cfg)
+    if df is None or len(df) == 0:
+        return None
     windows, labels = create_coordination_scenarios(df, cfg)
     X, y = extract_all_features(windows, labels, cfg)
-    results = train_and_evaluate_models(X, y, cfg)
+    return windows, labels, X, y
 
+
+def _get_figures_out_dir(cfg):
+    """Resolve figures subdir from config and return Path."""
     fc = cfg.get("farm_coordination", {})
     figures_subdir = fc.get("figures_subdir", "figures_coordination")
-    out_dir = _SCRIPT_DIR / figures_subdir
-    generate_visualizations(windows, labels, X, y, results, out_dir, cfg)
+    return _SCRIPT_DIR / figures_subdir
 
+
+def _log_final_summary(results, out_dir):
+    """Log best model, classification report, and completion message."""
     logger.info("\n" + "=" * 60)
     logger.info("FINAL SUMMARY")
     logger.info("=" * 60)
@@ -426,6 +432,24 @@ def main(config_path=None):
     )
     logger.info(f"\nVisualizations saved to: {out_dir}/")
     logger.info("\nAnalysis complete!")
+
+
+def main(config_path=None):
+    """Main entry: load config and run pipeline. No magic numbers; all from config."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+
+    _log_banner()
+    prepared = _fetch_and_prepare_data(cfg)
+    if prepared is None:
+        logger.error("Failed to fetch wind data or no data returned.")
+        return
+    windows, labels, X, y = prepared
+    results = train_and_evaluate_models(X, y, cfg)
+    out_dir = _get_figures_out_dir(cfg)
+    generate_visualizations(windows, labels, X, y, results, out_dir, cfg)
+    _log_final_summary(results, out_dir)
 
 
 if __name__ == "__main__":

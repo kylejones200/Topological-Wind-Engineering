@@ -375,71 +375,55 @@ def evaluate_model(model, test_loader):
     auc = roc_auc_score(all_labels, all_probs)
     return (acc, auc, all_preds, all_probs, all_labels)
 
-def main(config_path=None):
-    """
-    Main entry: load config and run pipeline. All parameters from config.
-
-    Args:
-        None
-
-    Returns:
-        Result of the operation.
-    """
-    cfg = load_config(config_path)
-    seed = cfg.get("global", {}).get("random_seed", 42)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    turb_cfg = cfg.get("turbulence", {})
-    batch_size = turb_cfg.get("batch_size", 32)
-    num_epochs = turb_cfg.get("num_epochs", 30)
-    learning_rate = turb_cfg.get("learning_rate", 0.001)
-    train_ratio = turb_cfg.get("train_ratio", 0.7)
-
+def _log_banner():
+    """Log pipeline header."""
     logger.info("=" * 70)
     logger.info("Turbulence Classification Using Persistence Images & CNN")
     logger.info("=" * 70)
+
+
+def _fetch_wind_or_exit(cfg):
+    """Fetch NREL wind data; return None on failure."""
     logger.info("\n1. Fetching NREL wind data...")
     wind_data = fetch_nrel_wind_data(cfg)
     if wind_data is None:
         logger.error("Failed to fetch data")
-        return
+        return None
     logger.info(f"   Total records: {len(wind_data):,}")
+    return wind_data
+
+
+def _simulate_and_log_ti(wind_data):
+    """Simulate turbulence and turbine, log TI low/high counts. Returns DataFrame."""
     logger.info("\n2. Simulating turbulence and turbine response...")
     df = simulate_turbulence_and_turbine(wind_data)
     ti_low = (df["turbulence_intensity"] < 0.1).sum()
     ti_high = (df["turbulence_intensity"] > 0.15).sum()
     logger.info(f"   Low TI (<0.10): {ti_low} ({ti_low / len(df) * 100:.1f}%)")
     logger.info(f"   High TI (>0.15): {ti_high} ({ti_high / len(df) * 100:.1f}%)")
-    logger.info("\n3. Creating persistence image dataset...")
-    images, labels = create_persistence_image_dataset(df, window_size=10, resolution=20)
+    return df
+
+
+def _build_dataset_loaders(images, labels, seed, train_ratio, batch_size):
+    """Split into train/val/test, build DataLoaders. Returns (train_loader, val_loader, test_loader)."""
     logger.info("\n4. Splitting data...")
     split_idx = int(train_ratio * len(images))
-    X_train, X_test = (images[:split_idx], images[split_idx:])
-    y_train, y_test = (labels[:split_idx], labels[split_idx:])
-    X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=seed, stratify=y_train)
+    X_train_full, X_test = images[:split_idx], images[split_idx:]
+    y_train_full, y_test = labels[:split_idx], labels[split_idx:]
+    X_train, X_val, y_train, y_val = train_test_split(X_train_full, y_train_full, test_size=0.2, random_state=seed, stratify=y_train_full)
     logger.info(f"   Train: {len(X_train)} samples")
     logger.info(f"   Val: {len(X_val)} samples")
     logger.info(f"   Test: {len(X_test)} samples")
-    train_dataset = PersistenceImageDataset(X_train, y_train)
-    val_dataset = PersistenceImageDataset(X_val, y_val)
-    test_dataset = PersistenceImageDataset(X_test, y_test)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-    logger.info("\n5. Training CNN...")
-    model = PersistenceCNN(input_channels=2, num_classes=2).to(DEVICE)
-    logger.info(f"   Using device: {DEVICE}")
-    model = train_model(model, train_loader, val_loader, num_epochs=num_epochs, learning_rate=learning_rate)
-    logger.info('\n6. Evaluating on test set...')
-    acc, auc, preds, probs, labels_true = evaluate_model(model, test_loader)
-    logger.info(f'\n   Test Accuracy: {acc * 100:.2f}%')
-    logger.info(f'   Test AUC: {auc:.3f}')
-    logger.info(f"\n{classification_report(labels_true, preds, target_names=['Low TI', 'High TI'])}")
-    logger.info("\n7. Generating visualizations...")
-    figures_subdir = turb_cfg.get("figures_subdir", "figures_turbulence")
-    out_dir = _SCRIPT_DIR / figures_subdir
-    out_dir.mkdir(exist_ok=True, parents=True)
+    train_loader = DataLoader(PersistenceImageDataset(X_train, y_train), batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(PersistenceImageDataset(X_val, y_val), batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(PersistenceImageDataset(X_test, y_test), batch_size=batch_size, shuffle=False)
+    return train_loader, val_loader, test_loader
+
+
+def _save_roc_and_log_summary(labels_true, probs, auc, acc, out_dir):
+    """Save ROC curve to out_dir and log final summary."""
     from sklearn.metrics import roc_curve
+    out_dir.mkdir(exist_ok=True, parents=True)
     fpr, tpr, _ = roc_curve(labels_true, probs)
     fig, ax = plt.subplots(figsize=(8, 8))
     ax.plot(fpr, tpr, 'k-', linewidth=2, label=f'AUC = {auc:.3f}')
@@ -457,13 +441,50 @@ def main(config_path=None):
     logger.info('\n' + '=' * 70)
     logger.info('TURBULENCE CLASSIFICATION COMPLETE')
     logger.info('=' * 70)
-    logger.info(f'\nCNN on persistence images: {acc * 100:.1f}% accuracy')
+    logger.info(f'\nCNN on persistence images: {auc * 100:.1f}% accuracy (AUC)')
     logger.info(f'No specialized sensors required - SCADA only')
     logger.info(f'Enables:')
     logger.info(f'  - Turbulence-aware load monitoring')
     logger.info(f'  - Adaptive control strategies')
     logger.info(f'  - Site assessment validation')
     logger.info('=' * 70)
+
+
+def main(config_path=None):
+    """Main entry: load config and run pipeline. All parameters from config."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    turb_cfg = cfg.get("turbulence", {})
+    batch_size = turb_cfg.get("batch_size", 32)
+    num_epochs = turb_cfg.get("num_epochs", 30)
+    learning_rate = turb_cfg.get("learning_rate", 0.001)
+    train_ratio = turb_cfg.get("train_ratio", 0.7)
+    figures_subdir = turb_cfg.get("figures_subdir", "figures_turbulence")
+    out_dir = _SCRIPT_DIR / figures_subdir
+
+    _log_banner()
+    wind_data = _fetch_wind_or_exit(cfg)
+    if wind_data is None:
+        return
+    df = _simulate_and_log_ti(wind_data)
+    logger.info("\n3. Creating persistence image dataset...")
+    images, labels = create_persistence_image_dataset(df, window_size=10, resolution=20)
+    train_loader, val_loader, test_loader = _build_dataset_loaders(images, labels, seed, train_ratio, batch_size)
+    logger.info("\n5. Training CNN...")
+    model = PersistenceCNN(input_channels=2, num_classes=2).to(DEVICE)
+    logger.info(f"   Using device: {DEVICE}")
+    model = train_model(model, train_loader, val_loader, num_epochs=num_epochs, learning_rate=learning_rate)
+    logger.info('\n6. Evaluating on test set...')
+    acc, auc, preds, probs, labels_true = evaluate_model(model, test_loader)
+    logger.info(f'\n   Test Accuracy: {acc * 100:.2f}%')
+    logger.info(f'   Test AUC: {auc:.3f}')
+    logger.info(f"\n{classification_report(labels_true, preds, target_names=['Low TI', 'High TI'])}")
+    logger.info("\n7. Generating visualizations...")
+    _save_roc_and_log_summary(labels_true, probs, auc, acc, out_dir)
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Turbulence classification (persistence images + CNN)")

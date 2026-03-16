@@ -783,7 +783,7 @@ def plot_roc_curve(
 ) -> None:
     """
     Plot and save ROC curve.
-    
+
     Args:
         labels_true: True labels.
         probs: Predicted probabilities.
@@ -791,7 +791,7 @@ def plot_roc_curve(
         out_path: Output file path.
     """
     fpr, tpr, _ = roc_curve(labels_true, probs)
-    
+
     fig, ax = plt.subplots(figsize=ROC_CURVE_SIZE)
     ax.plot(fpr, tpr, 'b-', linewidth=2, label=f'AUC = {auc:.3f}')
     ax.plot([0, 1], [0, 1], 'k--', linewidth=1, label='Random')
@@ -808,32 +808,18 @@ def plot_roc_curve(
     logger.info(f"Saved ROC curve to {out_path}")
 
 
-def main(config_path: Optional[Path] = None) -> None:
-    """
-    Main execution: load config, then fetch data, simulate turbine response,
-    create persistence images, train CNN, and evaluate.
-    """
-    cfg = load_config(config_path)
-    seed = cfg.get("global", {}).get("random_seed", 42)
-    turb = cfg.get("turbulence", {})
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
+def _log_banner() -> None:
+    """Log the run header banner."""
     logger.info("=" * 70)
     logger.info("Turbulence Classification Using Persistence Images & CNN")
     logger.info("=" * 70)
 
-    # Fetch data
-    logger.info("\n1. Fetching NREL wind data...")
-    wind_data = fetch_nrel_wind_data(cfg)
-    if wind_data is None:
-        logger.error('Failed to fetch data')
-        return
-    
-    logger.info(f'Total records: {len(wind_data):,}')
-    
-    # Simulate turbulence and turbine
-    logger.info('\n2. Simulating turbulence and turbine response...')
+
+def _simulate_and_log_ti(
+    wind_data: pd.DataFrame,
+    seed: int,
+) -> pd.DataFrame:
+    """Run turbulence/turbine simulation and log TI low/high counts. Returns enriched DataFrame."""
     df = simulate_turbulence_and_turbine(wind_data, random_seed=seed)
     ti_low = (df['turbulence_intensity'] < TI_LOW_THRESHOLD).sum()
     ti_high = (df['turbulence_intensity'] > TI_HIGH_THRESHOLD).sum()
@@ -845,70 +831,80 @@ def main(config_path: Optional[Path] = None) -> None:
         f'High TI (>{TI_HIGH_THRESHOLD}): {ti_high} '
         f'({ti_high / len(df) * 100:.1f}%)'
     )
-    
-    # Create persistence images
-    logger.info('\n3. Creating persistence image dataset...')
-    images, labels = create_persistence_image_dataset(
-        df, window_size=DEFAULT_WINDOW_SIZE, resolution=DEFAULT_RESOLUTION
-    )
-    
-    # Split data
-    logger.info('\n4. Splitting data...')
+    return df
+
+
+def _train_val_test_split(
+    images: np.ndarray,
+    labels: np.ndarray,
+    seed: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split images/labels into train/val/test and log sizes. Returns (X_train, X_val, X_test, y_train, y_val, y_test)."""
     split_idx = int(TRAIN_TEST_SPLIT_RATIO * len(images))
-    X_train, X_test = images[:split_idx], images[split_idx:]
-    y_train, y_test = labels[:split_idx], labels[split_idx:]
-    
+    X_train_full, X_test = images[:split_idx], images[split_idx:]
+    y_train_full, y_test = labels[:split_idx], labels[split_idx:]
+
     X_train, X_val, y_train, y_val = train_test_split(
-        X_train, y_train,
+        X_train_full, y_train_full,
         test_size=VAL_SPLIT_RATIO,
         random_state=seed,
-        stratify=y_train
+        stratify=y_train_full,
     )
-    
     logger.info(f'Train: {len(X_train)} samples')
     logger.info(f'Val: {len(X_val)} samples')
     logger.info(f'Test: {len(X_test)} samples')
-    
-    # Create data loaders
+    return X_train, X_val, X_test, y_train, y_val, y_test
+
+
+def _build_dataloaders(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_val: np.ndarray,
+    y_val: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+) -> Tuple[DataLoader, DataLoader, DataLoader]:
+    """Build PyTorch datasets and DataLoaders for train/val/test."""
     train_dataset = PersistenceImageDataset(X_train, y_train)
     val_dataset = PersistenceImageDataset(X_val, y_val)
     test_dataset = PersistenceImageDataset(X_test, y_test)
-    
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
-    
-    # Train model
-    logger.info('\n5. Training CNN...')
-    model = PersistenceCNN(
-        input_channels=INPUT_CHANNELS, num_classes=NUM_CLASSES
-    ).to(DEVICE)
-    logger.info(f'Using device: {DEVICE}')
-    
-    model = train_model(
-        model, train_loader, val_loader,
-        num_epochs=NUM_EPOCHS, learning_rate=LEARNING_RATE
-    )
-    
-    # Evaluate
-    logger.info('\n6. Evaluating on test set...')
+    return train_loader, val_loader, test_loader
+
+
+def _evaluate_and_report(
+    model: nn.Module,
+    test_loader: DataLoader,
+) -> Tuple[float, float, np.ndarray, np.ndarray, np.ndarray]:
+    """Run evaluation, log accuracy/AUC/classification report; return (acc, auc, preds, probs, labels_true)."""
     acc, auc, preds, probs, labels_true = evaluate_model(model, test_loader)
-    
     logger.info(f'\nTest Accuracy: {acc * 100:.2f}%')
     logger.info(f'Test AUC: {auc:.3f}')
     logger.info(
         f"\n{classification_report(labels_true, preds, target_names=['Low TI', 'High TI'])}"
     )
-    
-    # Visualize
-    logger.info("\n7. Generating visualizations...")
+    return acc, auc, preds, probs, labels_true
+
+
+def _save_figures(
+    labels_true: np.ndarray,
+    probs: np.ndarray,
+    auc: float,
+    script_dir: Path,
+    cfg: Dict[str, Any],
+) -> None:
+    """Create figures subdir from config and save ROC curve."""
+    turb = cfg.get("turbulence", {})
     figures_subdir = turb.get("figures_subdir", "figures_turbulence")
-    out_dir = _SCRIPT_DIR / figures_subdir
+    out_dir = script_dir / figures_subdir
     out_dir.mkdir(exist_ok=True, parents=True)
-    
     plot_roc_curve(labels_true, probs, auc, out_dir / 'roc_curve.png')
-    
-    # Summary
+
+
+def _log_final_summary(acc: float) -> None:
+    """Log the final completion summary."""
     logger.info('\n' + '=' * 70)
     logger.info('TURBULENCE CLASSIFICATION COMPLETE')
     logger.info('=' * 70)
@@ -919,6 +915,57 @@ def main(config_path: Optional[Path] = None) -> None:
     logger.info('  - Adaptive control strategies')
     logger.info('  - Site assessment validation')
     logger.info('=' * 70)
+
+
+def main(config_path: Optional[Path] = None) -> None:
+    """
+    Main execution: load config, then fetch data, simulate turbine response,
+    create persistence images, train CNN, and evaluate.
+    """
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    _log_banner()
+
+    logger.info("\n1. Fetching NREL wind data...")
+    wind_data = fetch_nrel_wind_data(cfg)
+    if wind_data is None:
+        logger.error('Failed to fetch data')
+        return
+    logger.info(f'Total records: {len(wind_data):,}')
+
+    logger.info('\n2. Simulating turbulence and turbine response...')
+    df = _simulate_and_log_ti(wind_data, seed)
+
+    logger.info('\n3. Creating persistence image dataset...')
+    images, labels = create_persistence_image_dataset(
+        df, window_size=DEFAULT_WINDOW_SIZE, resolution=DEFAULT_RESOLUTION
+    )
+
+    logger.info('\n4. Splitting data...')
+    X_train, X_val, X_test, y_train, y_val, y_test = _train_val_test_split(images, labels, seed)
+    train_loader, val_loader, test_loader = _build_dataloaders(
+        X_train, y_train, X_val, y_val, X_test, y_test
+    )
+
+    logger.info('\n5. Training CNN...')
+    model = PersistenceCNN(
+        input_channels=INPUT_CHANNELS, num_classes=NUM_CLASSES
+    ).to(DEVICE)
+    logger.info(f'Using device: {DEVICE}')
+    model = train_model(
+        model, train_loader, val_loader,
+        num_epochs=NUM_EPOCHS, learning_rate=LEARNING_RATE
+    )
+
+    logger.info('\n6. Evaluating on test set...')
+    acc, auc, preds, probs, labels_true = _evaluate_and_report(model, test_loader)
+
+    logger.info("\n7. Generating visualizations...")
+    _save_figures(labels_true, probs, auc, _SCRIPT_DIR, cfg)
+
+    _log_final_summary(acc)
 
 
 if __name__ == "__main__":

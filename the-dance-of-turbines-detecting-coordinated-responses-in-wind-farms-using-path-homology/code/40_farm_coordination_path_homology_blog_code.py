@@ -715,41 +715,40 @@ def visualize_results(
     logger.info(f"Saved feature importance to {importance_path}")
 
 
-def main(config_path: Optional[Path] = None) -> None:
-    """
-    Main execution: load config, then fetch data, simulate wind farm,
-    extract features, train model, and generate visualizations.
-    """
-    cfg = load_config(config_path)
-    seed = cfg.get("global", {}).get("random_seed", 42)
-    fc = cfg.get("farm_coordination", {})
-    np.random.seed(seed)
-
+def _log_banner():
+    """Log pipeline header."""
     logger.info("=" * 70)
     logger.info("Wind Farm Coordination Detection via Path Homology")
     logger.info("=" * 70)
 
-    # Fetch data
+
+def _fetch_wind_or_exit(cfg):
+    """Fetch NREL wind data; return None on failure."""
     logger.info("\n1. Fetching NREL wind data...")
     wind_data = fetch_nrel_wind_data(cfg)
     if wind_data is None:
         logger.error('Failed to fetch data')
-        return
-    
+        return None
     logger.info(f'Total records: {len(wind_data):,}')
-    
-    # Simulate wind farm
+    return wind_data
+
+
+def _simulate_farm_and_log(wind_data, seed):
+    """Simulate wind farm and log timestep count. Returns (power_outputs, positions)."""
     logger.info('\n2. Simulating 20-turbine wind farm...')
     power_outputs, positions = simulate_wind_farm(
         wind_data,
         n_turbines=DEFAULT_N_TURBINES,
         grid_size=DEFAULT_GRID_SIZE,
         spacing_m=DEFAULT_SPACING_M,
-        random_seed=seed
+        random_seed=seed,
     )
     logger.info(f'Simulated {power_outputs.shape[0]:,} timesteps')
-    
-    # Inject coordination events
+    return power_outputs, positions
+
+
+def _inject_and_log(power_outputs, positions):
+    """Inject coordination events and log label counts. Returns (power_outputs, labels)."""
     logger.info('\n3. Injecting coordination patterns...')
     power_outputs, labels = inject_coordination_events(
         power_outputs, positions, random_seed=RANDOM_SEED
@@ -767,62 +766,58 @@ def main(config_path: Optional[Path] = None) -> None:
         f"Oscillatory: {label_counts.get(2, 0)} "
         f"({label_counts.get(2, 0) / len(labels) * 100:.1f}%)"
     )
-    
-    # Extract features
+    return power_outputs, labels
+
+
+def _extract_split_scale(power_outputs, labels, seed):
+    """Extract features, split train/test, scale. Returns (X_train_scaled, X_test_scaled, y_train, y_test, feature_names)."""
     logger.info('\n4. Extracting path homology features...')
     X, y, feature_names = create_dataset(
         power_outputs, labels, window_size=WINDOW_SIZE_SAMPLES
     )
-    
-    # Split data
     logger.info('\n5. Splitting data...')
     split_idx = int(TRAIN_TEST_SPLIT_RATIO * len(X))
     X_train, X_test = X[:split_idx], X[split_idx:]
     y_train, y_test = y[:split_idx], y[split_idx:]
-    
-    # Scale features
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
-    
-    # Train model
+    return X_train_scaled, X_test_scaled, y_train, y_test, feature_names
+
+
+def _train_evaluate_and_log(X_train_scaled, y_train, X_test_scaled, y_test, seed):
+    """Train Random Forest, predict, log accuracy and report. Returns (feature_importance, y_pred, acc)."""
     logger.info('\n6. Training Random Forest...')
     clf = RandomForestClassifier(
         n_estimators=N_ESTIMATORS,
         max_depth=MAX_DEPTH,
-        random_state=seed
+        random_state=seed,
     )
     clf.fit(X_train_scaled, y_train)
     y_pred = clf.predict(X_test_scaled)
-    
-    # Evaluate
     acc = accuracy_score(y_test, y_pred)
     logger.info(f'\nAccuracy: {acc * 100:.2f}%')
     logger.info(
         f"\n{classification_report(y_test, y_pred, target_names=['Wake', 'Grid', 'Oscillatory'])}"
     )
-    
-    # Feature importance
     feature_importance = clf.feature_importances_
+    return feature_importance, y_pred, acc
+
+
+def _log_top_features(feature_names, feature_importance, top_n=10):
+    """Log top N feature importance values."""
     top_features = sorted(
         zip(feature_names, feature_importance),
         key=lambda x: x[1],
-        reverse=True
-    )[:10]
+        reverse=True,
+    )[:top_n]
     logger.info('\nTop 10 features:')
     for fname, imp in top_features:
         logger.info(f'  {fname}: {imp:.4f}')
-    
-    # Visualize
-    logger.info("\n7. Generating visualizations...")
-    figures_subdir = fc.get("figures_subdir", "figures_coordination")
-    out_dir = _SCRIPT_DIR / figures_subdir
-    visualize_results(
-        y_test, y_pred, feature_importance, feature_names,
-        out_dir
-    )
-    
-    # Summary
+
+
+def _log_final_summary(acc):
+    """Log completion banner and takeaways."""
     logger.info('\n' + '=' * 70)
     logger.info('WIND FARM COORDINATION DETECTION COMPLETE')
     logger.info('=' * 70)
@@ -836,6 +831,32 @@ def main(config_path: Optional[Path] = None) -> None:
     logger.info('  - Strongly connected components (directed paths)')
     logger.info('  - Bidirectional ratio (simultaneity vs propagation)')
     logger.info('=' * 70)
+
+
+def main(config_path: Optional[Path] = None) -> None:
+    """
+    Main execution: load config, then fetch data, simulate wind farm,
+    extract features, train model, and generate visualizations.
+    """
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    fc = cfg.get("farm_coordination", {})
+    np.random.seed(seed)
+    figures_subdir = fc.get("figures_subdir", "figures_coordination")
+    out_dir = _SCRIPT_DIR / figures_subdir
+
+    _log_banner()
+    wind_data = _fetch_wind_or_exit(cfg)
+    if wind_data is None:
+        return
+    power_outputs, positions = _simulate_farm_and_log(wind_data, seed)
+    power_outputs, labels = _inject_and_log(power_outputs, positions)
+    X_train_scaled, X_test_scaled, y_train, y_test, feature_names = _extract_split_scale(power_outputs, labels, seed)
+    feature_importance, y_pred, acc = _train_evaluate_and_log(X_train_scaled, y_train, X_test_scaled, y_test, seed)
+    _log_top_features(feature_names, feature_importance)
+    logger.info("\n7. Generating visualizations...")
+    visualize_results(y_test, y_pred, feature_importance, feature_names, out_dir)
+    _log_final_summary(acc)
 
 
 if __name__ == "__main__":

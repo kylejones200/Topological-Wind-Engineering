@@ -242,11 +242,9 @@ def evaluate_model(X_train, y_train, X_test, y_test, model):
     f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0
     return (auc, acc, f1)
 
-def main(config_path=None):
-    """Main entry: load config and run pipeline."""
-    cfg = load_config(config_path)
+def _run_pca_pipeline(cfg):
+    """Fetch data, build windows and PCA/TDA features, run multi-component CV, log summary. Uses seed from config."""
     seed = cfg.get("global", {}).get("random_seed", 42)
-    np.random.seed(seed)
     logger.info("=" * 70)
     logger.info("PCA Component Analysis for Wind Turbine Classification")
     logger.info("Testing different numbers of PCA components")
@@ -387,6 +385,16 @@ def main(config_path=None):
             logger.info(f'Variance Explained: {var_exp:.1%}')
         logger.info('=' * 70)
     logger.info('\nAnalysis complete!')
+
+
+def main(config_path=None):
+    """Main entry: load config and run pipeline."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    _run_pca_pipeline(cfg)
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="PCA component analysis for turbine classification")

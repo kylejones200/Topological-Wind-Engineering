@@ -80,20 +80,32 @@ def update(frame):
     ax3.axis('off')
     ax3.set_title('Status', fontsize=11, fontweight='normal')
     return []
-def main(config_path=None):
-    cfg = load_config(config_path)
-    seed = cfg.get("global", {}).get("random_seed", 42)
-    np.random.seed(seed)
+
+
+def _get_animation_output_path(cfg):
+    """Resolve output directory from config and return path to GIF file."""
     ym = cfg.get("yaw_mapper", {})
     figures_subdir = ym.get("figures_subdir", "figures_yaw")
     out_dir = _SCRIPT_DIR / figures_subdir
     out_dir.mkdir(parents=True, exist_ok=True)
-    output_file = out_dir / "38_yaw_misalignment_animation.gif"
+    return out_dir / "38_yaw_misalignment_animation.gif"
+
+
+def _build_and_save_animation(output_path):
+    """Build FuncAnimation, save to output_path, and close figure."""
     logger.info("Creating yaw misalignment animation...")
     anim = animation.FuncAnimation(fig, update, frames=N_FRAMES, interval=1000 / FPS, blit=True, repeat=True)
-    anim.save(str(output_file), writer="pillow", fps=FPS, dpi=100)
-    logger.info(f"✓ Animation saved: {output_file}")
+    anim.save(str(output_path), writer="pillow", fps=FPS, dpi=100)
+    logger.info(f"✓ Animation saved: {output_path}")
     plt.close()
+
+
+def main(config_path=None):
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    output_path = _get_animation_output_path(cfg)
+    _build_and_save_animation(output_path)
 
 
 if __name__ == "__main__":

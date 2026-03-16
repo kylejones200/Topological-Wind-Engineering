@@ -225,19 +225,10 @@ def evaluate_model(X_train, y_train, X_test, y_test, model):
     acc = ((p > 0.5).astype(int) == y_test).mean()
     return (auc, acc)
 
-def main(config_path=None):
-    """
-    Main.
-
-    Returns:
-        Description of return value.
-    """
-    cfg = load_config(config_path)
-    seed = cfg.get("global", {}).get("random_seed", 42)
+def _run_data_plots_and_features(cfg):
+    """Fetch NREL data, simulate, build windows, phase portrait, persistence diagram, extract TDA/PCA features. Returns (X_tda, X_pca, y, t, data_source, out_dir) or None."""
     rt = cfg.get("regime_tda", {})
-    np.random.seed(seed)
-    figures_subdir = rt.get("figures_subdir", "figures")
-    out_dir = _SCRIPT_DIR / figures_subdir
+    out_dir = _SCRIPT_DIR / rt.get("figures_subdir", "figures")
     out_dir.mkdir(exist_ok=True, parents=True)
     logger.info("=" * 60)
     logger.info("Topological Data Analysis of Wind Turbine SCADA")
@@ -250,13 +241,12 @@ def main(config_path=None):
     logger.info("   Source: NREL Wind Toolkit BC-HRRR dataset")
     logger.info("   Reference: https://developer.nrel.gov/docs/wind/wind-toolkit/")
     wind_data = fetch_nrel_wind_data(cfg)
-    if wind_data is not None:
-        df = simulate_turbine_from_wind(wind_data)
-        data_source = 'NREL Wind Toolkit API (real wind data)'
-    else:
+    if wind_data is None:
         logger.info('   Could not fetch NREL data, using synthetic fallback')
         logger.info('   (This is expected with DEMO_KEY rate limits)')
-        return
+        return None
+    df = simulate_turbine_from_wind(wind_data)
+    data_source = 'NREL Wind Toolkit API (real wind data)'
     logger.info(f'   Generated {len(df):,} turbine records')
     logger.info(f"   Wind speed range: {df['wind_speed'].min():.1f} - {df['wind_speed'].max():.1f} m/s")
     logger.info(f"   Power range: {df['power'].min():.1f} - {df['power'].max():.1f} kW")
@@ -305,6 +295,11 @@ def main(config_path=None):
     X_tda = build_tda_matrix(Xw)
     logger.info('   b) PCA features (baseline)...')
     X_pca = build_pca_matrix(Xw)
+    return (X_tda, X_pca, y, t, data_source, out_dir)
+
+
+def _run_cv_and_log_results(X_tda, X_pca, y, t, seed, rt, data_source, out_dir):
+    """Run purged forward CV, log results table and leakage summary."""
     logger.info('\n6. Evaluating with purged forward cross-validation...')
     n_splits = rt.get("n_splits_analysis", 6)
     purge_windows = rt.get("purge_windows", 1)
@@ -351,6 +346,21 @@ def main(config_path=None):
     logger.info('  Turbine simulation: Generic 2MW wind turbine response')
     logger.info('\nAnalysis complete!')
     logger.info(f'Figures saved to: {out_dir.absolute()}/')
+
+
+def main(config_path=None):
+    """Main entry: load config and run TDA pipeline with NREL data."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    rt = cfg.get("regime_tda", {})
+    np.random.seed(seed)
+    data = _run_data_plots_and_features(cfg)
+    if data is None:
+        return
+    X_tda, X_pca, y, t, data_source, out_dir = data
+    _run_cv_and_log_results(X_tda, X_pca, y, t, seed, rt, data_source, out_dir)
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="TDA with NREL Wind Toolkit API")

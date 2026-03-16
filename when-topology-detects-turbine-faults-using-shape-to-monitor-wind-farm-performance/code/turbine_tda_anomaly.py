@@ -292,12 +292,10 @@ def evaluate_model(X_train, y_train, X_test, y_test, model):
     f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0
     return (auc, acc, f1, precision, recall)
 
-def main(config_path=None):
-    """Main entry: load config and run pipeline."""
-    cfg = load_config(config_path)
-    seed = cfg.get("global", {}).get("random_seed", 42)
+
+def _run_data_pipeline(cfg):
+    """Load config, ensure out_dir, fetch wind, simulate faults, build windows and features. Returns (df, Xw, y, t, X_tda, X_pca, X_combined, out_dir) or None."""
     rt = cfg.get("regime_tda", {})
-    np.random.seed(seed)
     figures_subdir = rt.get("figures_subdir", "figures")
     out_dir = _SCRIPT_DIR / figures_subdir
     out_dir.mkdir(exist_ok=True, parents=True)
@@ -309,7 +307,7 @@ def main(config_path=None):
     wind_data = fetch_nrel_wind_data(cfg)
     if wind_data is None:
         logger.info('Could not fetch data')
-        return
+        return None
     df = simulate_turbine_with_faults(wind_data, fault_probability=0.02)
     logger.info(f'   Generated {len(df):,} turbine records')
     logger.info(f"   Wind speed range: {df['wind_speed'].min():.1f} - {df['wind_speed'].max():.1f} m/s")
@@ -329,7 +327,17 @@ def main(config_path=None):
     logger.info('   c) Combined features...')
     X_combined = np.hstack([X_tda, X_pca])
     logger.info(f'      Combined shape: {X_combined.shape}')
-    models = {'LogReg': LogisticRegression(max_iter=2000, random_state=0, class_weight='balanced'), 'SVM-RBF': SVC(kernel='rbf', probability=True, random_state=0, class_weight='balanced'), 'RandomForest': RandomForestClassifier(n_estimators=100, max_depth=10, random_state=0, class_weight='balanced'), 'GradBoost': GradientBoostingClassifier(n_estimators=100, max_depth=5, random_state=0)}
+    return (df, Xw, y, t, X_tda, X_pca, X_combined, out_dir)
+
+
+def _run_anomaly_evaluation(y, t, X_tda, X_pca, X_combined):
+    """Run purged forward CV for TDA/PCA/combined and log per-model metrics. Returns results dict."""
+    models = {
+        'LogReg': LogisticRegression(max_iter=2000, random_state=0, class_weight='balanced'),
+        'SVM-RBF': SVC(kernel='rbf', probability=True, random_state=0, class_weight='balanced'),
+        'RandomForest': RandomForestClassifier(n_estimators=100, max_depth=10, random_state=0, class_weight='balanced'),
+        'GradBoost': GradientBoostingClassifier(n_estimators=100, max_depth=5, random_state=0),
+    }
     logger.info('\n4. Anomaly detection evaluation...')
     splits = purged_forward_splits(t, n_splits=5, purge_windows=1)
     logger.info(f'   Using {len(splits)} folds with purged forward CV\n')
@@ -356,6 +364,11 @@ def main(config_path=None):
                 auc, acc, f1, prec, rec = avg_metrics
                 logger.info(f'      {model_name:<15} AUC={auc:.3f}, ACC={acc:.3f}, F1={f1:.3f}, Prec={prec:.3f}, Rec={rec:.3f}')
         logger.info()
+    return results
+
+
+def _log_best_and_key_points(results):
+    """Log best configuration and key takeaways."""
     logger.info('=' * 70)
     logger.info('🏆 BEST ANOMALY DETECTION CONFIGURATION')
     logger.info('=' * 70)
@@ -383,6 +396,19 @@ def main(config_path=None):
     logger.info('- Realistic fault detection task')
     logger.info('- Lower AUC is expected - anomalies are subtle and realistic')
     logger.info('=' * 70)
+
+
+def main(config_path=None):
+    """Main entry: load config and run pipeline."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    data = _run_data_pipeline(cfg)
+    if data is None:
+        return
+    df, Xw, y, t, X_tda, X_pca, X_combined, out_dir = data
+    results = _run_anomaly_evaluation(y, t, X_tda, X_pca, X_combined)
+    _log_best_and_key_points(results)
     logger.info('\n5. Generating visualizations...')
     generate_visualizations(df, Xw, y, results, out_dir)
     logger.info('   Saved figures to', out_dir)

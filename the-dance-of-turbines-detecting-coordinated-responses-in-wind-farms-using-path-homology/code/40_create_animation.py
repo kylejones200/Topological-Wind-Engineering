@@ -85,19 +85,19 @@ def update(ax1, ax2, ax3, frame, N_FRAMES):
     return []
 
 
-def main(config_path=None):
-    """Load config, build animation, save to output path."""
-    cfg = load_config(config_path)
-    seed = cfg.get("global", {}).get("random_seed", 42)
-    np.random.seed(seed)
+def _get_animation_output_path(cfg):
+    """Resolve output dir from config, create it, return (path, fps, n_frames)."""
     fc = cfg.get("farm_coordination", {})
-    FPS = fc.get("animation_fps", FPS_DEFAULT)
-    N_FRAMES = fc.get("animation_frames", N_FRAMES_DEFAULT)
+    fps = fc.get("animation_fps", FPS_DEFAULT)
+    n_frames = fc.get("animation_frames", N_FRAMES_DEFAULT)
     figures_subdir = fc.get("figures_subdir", "figures_coordination")
     out_dir = _SCRIPT_DIR / figures_subdir
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "40_farm_coordination_animation.gif"
+    return out_dir / "40_farm_coordination_animation.gif", fps, n_frames
 
+
+def _build_and_save_animation(out_path, fps, n_frames):
+    """Build figure, FuncAnimation, save to out_path, and close figure."""
     fig = plt.figure(figsize=(14, 8), facecolor="white")
     gs = GridSpec(2, 2, figure=fig, hspace=0.3, wspace=0.3)
     ax1 = fig.add_subplot(gs[0, :])
@@ -108,13 +108,22 @@ def main(config_path=None):
         ax.spines["right"].set_visible(False)
 
     def _update(frame):
-        return update(ax1, ax2, ax3, frame, N_FRAMES)
+        return update(ax1, ax2, ax3, frame, n_frames)
 
     logger.info("Creating farm coordination animation...")
-    anim = animation.FuncAnimation(fig, _update, frames=N_FRAMES, interval=1000 / FPS, blit=True, repeat=True)
-    anim.save(str(out_path), writer="pillow", fps=FPS, dpi=100)
+    anim = animation.FuncAnimation(fig, _update, frames=n_frames, interval=1000 / fps, blit=True, repeat=True)
+    anim.save(str(out_path), writer="pillow", fps=fps, dpi=100)
     logger.info(f"✓ Animation saved: {out_path}")
     plt.close()
+
+
+def main(config_path=None):
+    """Load config, build animation, save to output path."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    out_path, fps, n_frames = _get_animation_output_path(cfg)
+    _build_and_save_animation(out_path, fps, n_frames)
 
 
 if __name__ == "__main__":

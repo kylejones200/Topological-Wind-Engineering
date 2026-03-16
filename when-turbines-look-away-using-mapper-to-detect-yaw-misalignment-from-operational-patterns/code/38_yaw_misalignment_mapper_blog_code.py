@@ -282,32 +282,48 @@ def visualize_mapper_graph(G, y_labels, out_dir):
     plt.savefig(out_dir / 'mapper_graph.png', dpi=300, bbox_inches='tight')
     plt.close()
 
-def main(config_path=None):
-    """Main entry: load config and run pipeline."""
-    cfg = load_config(config_path)
-    seed = cfg.get("global", {}).get("random_seed", 42)
-    ym = cfg.get("yaw_mapper", {})
-    np.random.seed(seed)
+
+def _log_banner():
+    """Log pipeline header."""
     logger.info("=" * 70)
     logger.info("Yaw Misalignment Detection Using Mapper")
     logger.info("=" * 70)
+
+
+def _fetch_wind_or_exit(cfg):
+    """Fetch NREL wind data; return None on failure."""
     logger.info("\n1. Fetching NREL wind data...")
     wind_data = fetch_nrel_wind_data(cfg)
     if wind_data is None:
         logger.error('Failed to fetch data')
-        return
+        return None
     logger.info(f'   Total records: {len(wind_data):,}')
+    return wind_data
+
+
+def _simulate_and_log_misalignment(wind_data):
+    """Simulate turbine with misalignment and log stats. Returns DataFrame."""
     logger.info('\n2. Simulating turbine with yaw misalignment...')
     df = simulate_turbine_with_misalignment(wind_data)
     misalign_pct = (df['yaw_misalignment'].abs() > 10).sum() / len(df) * 100
     logger.info(f'   Misalignment (>10°): {misalign_pct:.1f}% of time')
+    return df
+
+
+def _create_windows_and_log(df, window_size=10):
+    """Create windows with filters and log counts. Returns windows_df."""
     logger.info('\n3. Creating windows and computing filters...')
-    windows_df = create_windows_with_filters(df, window_size=10)
+    windows_df = create_windows_with_filters(df, window_size=window_size)
     logger.info(f'   Total windows: {len(windows_df)}')
     logger.info(f"   Aligned: {(windows_df['label'] == 0).sum()}")
     logger.info(f"   Misaligned: {(windows_df['label'] == 1).sum()}")
+    return windows_df
+
+
+def _train_test_split_and_log(windows_df, train_ratio=0.7):
+    """Split windows into train/test and log sizes. Returns (X_train, y_train, X_test, y_test, train_df, test_df)."""
     logger.info('\n4. Splitting data...')
-    split_idx = int(0.7 * len(windows_df))
+    split_idx = int(train_ratio * len(windows_df))
     train_df = windows_df.iloc[:split_idx]
     test_df = windows_df.iloc[split_idx:]
     X_train = train_df[['filter1', 'filter2']].values
@@ -316,21 +332,26 @@ def main(config_path=None):
     y_test = test_df['label'].values
     logger.info(f'   Train: {len(X_train)} windows')
     logger.info(f'   Test: {len(X_test)} windows')
+    return X_train, y_train, X_test, y_test, train_df, test_df
+
+
+def _build_mapper_and_classify(X_train, y_train, train_df, X_test, test_df, n_bins=8, overlap=0.5, n_clusters=2):
+    """Build Mapper graph and classify test set. Returns (G, y_pred, acc)."""
     logger.info('\n5. Building Mapper graph...')
-    G = build_mapper_graph(X_train, train_df['filter1'].values, train_df['filter2'].values, n_bins=8, overlap=0.5, n_clusters=2)
+    G = build_mapper_graph(X_train, train_df['filter1'].values, train_df['filter2'].values, n_bins=n_bins, overlap=overlap, n_clusters=n_clusters)
     logger.info(f'   Nodes: {G.number_of_nodes()}')
     logger.info(f'   Edges: {G.number_of_edges()}')
     logger.info(f'   Connected components: {nx.number_connected_components(G)}')
     logger.info('\n6. Classifying test set...')
     y_pred = classify_with_mapper(G, X_train, y_train, X_test, test_df['filter1'].values, test_df['filter2'].values)
-    acc = accuracy_score(y_test, y_pred)
+    acc = accuracy_score(test_df['label'].values, y_pred)
     logger.info(f'\n   Accuracy: {acc * 100:.2f}%')
-    logger.info(f"\n{classification_report(y_test, y_pred, target_names=['Aligned', 'Misaligned'])}")
-    figures_subdir = ym.get("figures_subdir", "figures_yaw")
-    out_dir = _SCRIPT_DIR / figures_subdir
-    out_dir.mkdir(exist_ok=True, parents=True)
-    logger.info("\n7. Generating visualizations...")
-    visualize_mapper_graph(G, y_train, str(out_dir))
+    logger.info(f"\n{classification_report(test_df['label'].values, y_pred, target_names=['Aligned', 'Misaligned'])}")
+    return G, y_pred, acc
+
+
+def _save_filter_space_plot(X_test, y_test, out_dir):
+    """Save filter-space scatter plot to out_dir."""
     fig, ax = plt.subplots(figsize=(10, 8))
     aligned_mask = y_test == 0
     misaligned_mask = y_test == 1
@@ -346,7 +367,10 @@ def main(config_path=None):
     plt.tight_layout()
     plt.savefig(out_dir / "filter_space.png", dpi=300, bbox_inches="tight")
     plt.close()
-    logger.info(f"   Saved visualizations to {out_dir}/")
+
+
+def _log_final_summary(acc):
+    """Log completion banner and takeaways."""
     logger.info('\n' + '=' * 70)
     logger.info('YAW MISALIGNMENT DETECTION COMPLETE')
     logger.info('=' * 70)
@@ -357,6 +381,35 @@ def main(config_path=None):
     logger.info(f'  - Temporal degradation trajectories')
     logger.info(f'  - Misalignment mechanism signatures')
     logger.info('=' * 70)
+
+
+def main(config_path=None):
+    """Main entry: load config and run pipeline."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    ym = cfg.get("yaw_mapper", {})
+    np.random.seed(seed)
+    _log_banner()
+    wind_data = _fetch_wind_or_exit(cfg)
+    if wind_data is None:
+        return
+    df = _simulate_and_log_misalignment(wind_data)
+    windows_df = _create_windows_and_log(df, window_size=10)
+    X_train, y_train, X_test, y_test, train_df, test_df = _train_test_split_and_log(windows_df, train_ratio=0.7)
+    n_bins = ym.get("n_bins", 8)
+    overlap = ym.get("overlap", 0.5)
+    n_clusters = ym.get("n_clusters", 2)
+    G, y_pred, acc = _build_mapper_and_classify(X_train, y_train, train_df, X_test, test_df, n_bins=n_bins, overlap=overlap, n_clusters=n_clusters)
+    figures_subdir = ym.get("figures_subdir", "figures_yaw")
+    out_dir = _SCRIPT_DIR / figures_subdir
+    out_dir.mkdir(exist_ok=True, parents=True)
+    logger.info("\n7. Generating visualizations...")
+    visualize_mapper_graph(G, y_train, str(out_dir))
+    _save_filter_space_plot(X_test, y_test, out_dir)
+    logger.info(f"   Saved visualizations to {out_dir}/")
+    _log_final_summary(acc)
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Yaw misalignment Mapper")

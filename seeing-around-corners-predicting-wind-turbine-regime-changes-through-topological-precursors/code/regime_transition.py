@@ -357,45 +357,65 @@ def generate_visualizations(X, y, y_pred, y_prob, feature_importance, feature_na
     plt.close()
     logger.info(f'\nVisualizations saved to {out_dir}/')
 
-def main(config_path=None):
-    """Main entry: load config and run pipeline. All parameters from config."""
-    cfg = load_config(config_path)
-    seed = cfg.get("global", {}).get("random_seed", 42)
-    np.random.seed(seed)
-    rt_cfg = cfg.get("regime_transition", {})
+REGIME_NAMES = ['Idle', 'Startup', 'Ramp-up', 'Rated', 'Shutdown']
 
+
+def _log_banner():
+    """Log pipeline header."""
     logger.info("=" * 70)
     logger.info("Regime Transition Prediction Using Zigzag Persistence")
     logger.info("=" * 70)
+
+
+def _fetch_wind_or_exit(cfg):
+    """Fetch NREL wind data; log and return None on failure."""
     logger.info("\n1. Fetching NREL wind data...")
     wind_data = fetch_nrel_wind_data(cfg)
     if wind_data is None:
         logger.error("Failed to fetch data")
-        return
+        return None
     logger.info(f"   Total records: {len(wind_data):,}")
+    return wind_data
+
+
+def _simulate_and_log_regimes(wind_data, cfg):
+    """Simulate turbine operation and log regime counts. Returns DataFrame."""
     logger.info("\n2. Simulating turbine operation...")
     df = simulate_turbine_operation(wind_data, cfg)
     regime_counts = df['regime'].value_counts().sort_index()
-    regime_names = ['Idle', 'Startup', 'Ramp-up', 'Rated', 'Shutdown']
     for regime_id, count in regime_counts.items():
-        logger.info(f'   {regime_names[regime_id]}: {count:,} records ({count / len(df) * 100:.1f}%)')
+        logger.info(f'   {REGIME_NAMES[regime_id]}: {count:,} records ({count / len(df) * 100:.1f}%)')
+    return df
+
+
+def _detect_and_log_transitions(df):
+    """Detect regime transitions and log counts by type. Returns list of transitions."""
     logger.info('\n3. Detecting regime transitions...')
     transitions = detect_transitions(df, min_duration=10)
     logger.info(f'   Found {len(transitions)} transitions')
     transition_types = {}
     for _, from_r, to_r in transitions:
-        key = f'{regime_names[from_r]} → {regime_names[to_r]}'
+        key = f'{REGIME_NAMES[from_r]} → {REGIME_NAMES[to_r]}'
         transition_types[key] = transition_types.get(key, 0) + 1
     logger.info('   Transition types:')
     for ttype, count in sorted(transition_types.items(), key=lambda x: -x[1])[:10]:
         logger.info(f'     {ttype}: {count}')
+    return transitions
+
+
+def _build_dataset_and_log(df, transitions):
+    """Build zigzag-feature dataset and log shape/labels. Returns (X, y, feature_names)."""
     logger.info('\n4. Creating dataset with zigzag persistence features...')
     X, y, feature_names = create_dataset(df, transitions, n_negative_samples=len(transitions) * 2)
     logger.info(f'   Dataset shape: {X.shape}')
     logger.info(f'   Transitions (positive): {(y == 1).sum()} ({(y == 1).mean() * 100:.1f}%)')
     logger.info(f'   Stable (negative): {(y == 0).sum()} ({(y == 0).mean() * 100:.1f}%)')
+    return X, y, feature_names
+
+
+def _stratified_split_and_scale(X, y, seed, train_ratio):
+    """Split with stratification and scale. Returns (X_train_scaled, X_test_scaled, y_train, y_test)."""
     logger.info("\n5. Splitting data with stratification...")
-    train_ratio = rt_cfg.get("train_ratio", 0.7)
     test_size = 1.0 - train_ratio
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=seed, stratify=y)
     logger.info(f'   Train: {len(X_train)} samples (positive: {(y_train == 1).sum()})')
@@ -403,11 +423,15 @@ def main(config_path=None):
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
+    return X_train_scaled, X_test_scaled, y_train, y_test
+
+
+def _train_classifiers(X_train_scaled, y_train, X_test_scaled, y_test, seed, n_estimators):
+    """Train RF, GB, SVM-RBF, LogReg and log metrics. Returns results dict."""
     logger.info('\n6. Training classifiers...')
-    n_est = cfg.get("farm_coordination", {}).get("n_estimators", 100) or 100
     models = {
-        "Random Forest": RandomForestClassifier(n_estimators=n_est, max_depth=12, random_state=seed),
-        "Gradient Boosting": GradientBoostingClassifier(n_estimators=n_est, max_depth=5, random_state=seed),
+        "Random Forest": RandomForestClassifier(n_estimators=n_estimators, max_depth=12, random_state=seed),
+        "Gradient Boosting": GradientBoostingClassifier(n_estimators=n_estimators, max_depth=5, random_state=seed),
         "SVM-RBF": SVC(kernel="rbf", probability=True, random_state=seed),
         "Logistic Regression": LogisticRegression(max_iter=1000, random_state=seed),
     }
@@ -427,6 +451,11 @@ def main(config_path=None):
         logger.info(f'      AUC: {auc:.3f}')
         logger.info(f'      Accuracy: {acc:.3f}')
         logger.info(f"\n{classification_report(y_test, y_pred, target_names=['Stable', 'Pre-Transition'])}")
+    return results
+
+
+def _log_feature_importance_and_save_viz(results, feature_names, X_test_scaled, y_test, out_dir):
+    """Log top feature importance and call generate_visualizations."""
     logger.info('\n7. Analyzing feature importance...')
     rf_model = results['Random Forest']['model']
     feature_importance = rf_model.feature_importances_
@@ -435,9 +464,16 @@ def main(config_path=None):
     for fname, importance in top_features:
         logger.info(f'      {fname}: {importance:.4f}')
     logger.info("\n8. Generating visualizations...")
-    figures_subdir = rt_cfg.get("figures_subdir", "figures_transitions")
-    out_dir = _SCRIPT_DIR / figures_subdir
-    generate_visualizations(X_test_scaled, y_test, results["Random Forest"]["y_pred"], results["Random Forest"]["y_prob"], feature_importance, feature_names, str(out_dir))
+    generate_visualizations(
+        X_test_scaled, y_test,
+        results["Random Forest"]["y_pred"], results["Random Forest"]["y_prob"],
+        feature_importance, feature_names,
+        str(out_dir),
+    )
+
+
+def _log_final_summary(results):
+    """Log completion banner and best model summary."""
     logger.info('\n' + '=' * 70)
     logger.info('TRANSITION PREDICTION COMPLETE')
     logger.info('=' * 70)
@@ -450,6 +486,32 @@ def main(config_path=None):
     logger.info(f'  - Spiking bottleneck distances (reorganization)')
     logger.info(f'  - Rising H1 counts (state space expansion)')
     logger.info('=' * 70)
+
+
+def main(config_path=None):
+    """Main entry: load config and run pipeline. All parameters from config."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    rt_cfg = cfg.get("regime_transition", {})
+    n_est = cfg.get("farm_coordination", {}).get("n_estimators", 100) or 100
+    train_ratio = rt_cfg.get("train_ratio", 0.7)
+    figures_subdir = rt_cfg.get("figures_subdir", "figures_transitions")
+    out_dir = _SCRIPT_DIR / figures_subdir
+
+    _log_banner()
+    wind_data = _fetch_wind_or_exit(cfg)
+    if wind_data is None:
+        return
+    df = _simulate_and_log_regimes(wind_data, cfg)
+    transitions = _detect_and_log_transitions(df)
+    X, y, feature_names = _build_dataset_and_log(df, transitions)
+    X_train_scaled, X_test_scaled, y_train, y_test = _stratified_split_and_scale(X, y, seed, train_ratio)
+    results = _train_classifiers(X_train_scaled, y_train, X_test_scaled, y_test, seed, n_est)
+    _log_feature_importance_and_save_viz(results, feature_names, X_test_scaled, y_test, out_dir)
+    _log_final_summary(results)
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Regime transition prediction (zigzag persistence)")

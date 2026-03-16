@@ -178,12 +178,10 @@ def evaluate_model(X_train, y_train, X_test, y_test, model):
     acc = ((p > 0.5).astype(int) == y_test).mean()
     return (auc, acc)
 
-def main(config_path=None):
-    """Main entry: load config and run pipeline."""
-    cfg = load_config(config_path)
+def _run_synthetic_pipeline(cfg):
+    """Generate synthetic data, build windows/plots/features, run CV, and log results. Uses seed from config."""
     rt = cfg.get("regime_tda", {})
     seed = cfg.get("global", {}).get("random_seed", 42)
-    np.random.seed(seed)
     win_size = rt.get("win_size_analysis", 512)
     n_splits = rt.get("n_splits_analysis", 6)
     purge_windows = rt.get("purge_windows", 1)
@@ -282,6 +280,16 @@ def main(config_path=None):
     logger.info('=' * 60)
     logger.info('\nAnalysis complete!')
     logger.info(f'Figures saved to: {out_dir.absolute()}/')
+
+
+def main(config_path=None):
+    """Main entry: load config and run pipeline."""
+    cfg = load_config(config_path)
+    seed = cfg.get("global", {}).get("random_seed", 42)
+    np.random.seed(seed)
+    _run_synthetic_pipeline(cfg)
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="TDA with synthetic turbine data")

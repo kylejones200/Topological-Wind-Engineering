@@ -34,9 +34,29 @@ def check_import(module_name, package_name=None):
         logger.error(f'✗ {package_name} - {str(e)}')
         return False
 
+def _run_dependency_checks(required):
+    """Run check_import for each (module, package) in required. Returns True if all pass."""
+    all_good = True
+    for module, package in required:
+        if not check_import(module, package):
+            all_good = False
+    return all_good
+
+
+def _log_dependency_result(all_good):
+    """Log success or failure and next steps."""
+    logger.info("")
+    if all_good:
+        logger.info("✓ All dependencies are installed!")
+        logger.info("\nYou can now run scripts from repo root with: python path/to/script.py [--config config/default.yaml]")
+    else:
+        logger.error("✗ Some dependencies are missing.")
+        logger.info("\nInstall them with: pip install -r requirements.txt")
+
+
 def main(config_path=None):
     """Check all required dependencies. Optionally load config (e.g. for log level)."""
-    load_config(config_path)  # Ensures config is loadable; may be used for log level etc.
+    load_config(config_path)
     logger.info("Checking dependencies...\n")
     required = [
         ("numpy", "numpy"),
@@ -47,19 +67,9 @@ def main(config_path=None):
         ("persim", "persim"),
         ("openoa", "openoa"),
     ]
-    all_good = True
-    for module, package in required:
-        if not check_import(module, package):
-            all_good = False
-    logger.info("")
-    if all_good:
-        logger.info("✓ All dependencies are installed!")
-        logger.info("\nYou can now run scripts from repo root with: python path/to/script.py [--config config/default.yaml]")
-        return 0
-    else:
-        logger.error("✗ Some dependencies are missing.")
-        logger.info("\nInstall them with: pip install -r requirements.txt")
-        return 1
+    all_good = _run_dependency_checks(required)
+    _log_dependency_result(all_good)
+    return 0 if all_good else 1
 
 
 if __name__ == "__main__":
