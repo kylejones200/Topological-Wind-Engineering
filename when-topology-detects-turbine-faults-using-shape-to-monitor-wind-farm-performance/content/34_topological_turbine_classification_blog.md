@@ -1,3 +1,6 @@
+> **Archived prototype (synthetic data only).** This manuscript is frozen pending a real-data CARE benchmark. Reported metrics are from simulated experiments and must not be cited as field performance. See [SYNTHETIC_RESULTS.md](../../SYNTHETIC_RESULTS.md) and [MANUSCRIPT_STATUS.md](../../MANUSCRIPT_STATUS.md).
+>
+
 # When Topology Detects Turbine Faults: Using Shape to Monitor Wind Farm Performance
 
 Imagine a wind turbine quietly underperforming. The SCADA system reports normal wind speeds, reasonable rotor speeds, and plausible power output. No alarms trigger. Yet the turbine generates twenty percent less electricity than it should. This is not a catastrophic failure—those are easy to detect. This is subtle degradation: blade erosion reducing lift efficiency, controller drift causing suboptimal tracking, partial icing reducing swept area, or sensor miscalibration distorting control responses. These conditions may not violate individual sensor thresholds yet collectively cause significant underperformance and accelerate component wear.

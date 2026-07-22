@@ -1,18 +1,23 @@
+> **Archived prototype (synthetic data only).** This manuscript is frozen pending a real-data CARE benchmark. Reported metrics are from simulated experiments and must not be cited as field performance. See [SYNTHETIC_RESULTS.md](../../SYNTHETIC_RESULTS.md) and [MANUSCRIPT_STATUS.md](../../MANUSCRIPT_STATUS.md).
+>
+
 # Wind Turbine Anomaly Detection Using Topological Data Analysis
 
-**Physics-informed fault detection that achieves 100% recall with 95% precision**
+> **Archived prototype.** The metrics below are from a synthetic experiment with severe class imbalance and known methodological flaws. See [SYNTHETIC_RESULTS.md](../../SYNTHETIC_RESULTS.md).
+
+**Physics-informed fault detection prototype (synthetic data — not validated for deployment)**
 
 ---
 
-## 🎯 Overview
+## Overview
 
-This project demonstrates how topological data analysis (TDA) combined with physics-based modeling can detect subtle performance degradation in wind turbines. Unlike traditional threshold-based monitoring or circular ML approaches, we frame the problem as **behavioral deviation from expected performance**.
+This module explores whether topological data analysis (TDA) combined with physics-based modeling can detect simulated performance degradation in wind turbines. The problem is framed as **behavioral deviation from expected performance** on synthetic SCADA-like trajectories.
 
-**Key Achievement**: 100% fault detection (perfect recall) with only 5% false alarm rate.
+**Archived synthetic result (do not cite as field performance):** near-perfect recall on a 98/4 class-imbalanced window set, matching a trivial always-anomaly baseline.
 
 ---
 
-## 📊 Quick Results
+## Quick Results (synthetic, archived)
 
 | Metric | Value |
 |--------|-------|
@@ -20,9 +25,9 @@ This project demonstrates how topological data analysis (TDA) combined with phys
 | **Accuracy** | 95.0% |
 | **F1 Score** | 0.974 |
 | **Precision** | 95.0% |
-| **Recall** | 100% ← No missed faults! |
+| **Recall** | 100% |
 
-**Best Model**: Random Forest with 22 features (10 TDA + 12 PCA)
+These numbers reflect severe class imbalance (98 anomalous / 4 normal windows) and match a trivial majority-class baseline. See [SYNTHETIC_RESULTS.md](../../SYNTHETIC_RESULTS.md).
 
 ---
 

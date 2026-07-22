@@ -1,6 +1,8 @@
 # Topological-Wind-Engineering
 
-A software library for **Topological Data Analysis (TDA)** applied to wind energy monitoring, classification, and prediction. It provides reproducible implementations of persistent homology, Mapper, path homology, and zigzag persistence for use with standard SCADA data. The repository serves as supplemental material for associated journal submissions and is intended for researchers and engineers working at the intersection of applied topology and wind energy.
+A software library for **Topological Data Analysis (TDA)** applied to wind energy monitoring, classification, and prediction. It provides reproducible implementations of persistent homology, Mapper, and related tools for exploring whether topological features add value to conventional SCADA-based monitoring.
+
+**Important:** Archived prototype manuscripts in this repo use **synthetic or simulated data**. Their reported metrics are not validated for production use. See [SYNTHETIC_RESULTS.md](SYNTHETIC_RESULTS.md) and [MANUSCRIPT_STATUS.md](MANUSCRIPT_STATUS.md).
 
 ---
 
@@ -16,8 +18,8 @@ We reframe wind turbine monitoring as **behavioral pattern recognition**. Instea
 | **H₁** | Cyclic behavior, oscillations, hysteresis loops in power–wind space. |
 | **Persistence images** | Vectorization of persistence diagrams for deep learning (e.g. CNNs). |
 | **Mapper** | Skeletonization of operational manifolds; used for yaw and regime structure. |
-| **Path homology** | Directed structure on lead–lag networks; wake and grid coordination. |
-| **Zigzag persistence** | Time-varying complexes; precursors to startups, shutdowns, ramps. |
+| **Path homology** | *(planned)* Directed structure on lead–lag networks; current farm module uses NetworkX graph statistics as a placeholder. |
+| **Zigzag persistence** | *(planned)* Time-varying complexes; current regime module uses sliding-window ordinary persistence. |
 
 ---
 
@@ -27,9 +29,9 @@ We reframe wind turbine monitoring as **behavioral pattern recognition**. Instea
 |--------|-------------|------------------|
 | **Turbulence CNN** | Classifies local turbulence intensity (high vs low) using persistence images and convolutional neural networks. | `the-texture-of-wind-.../code/turbulence_classification.py` |
 | **Yaw Mapper** | Detects nacelle yaw misalignment by skeletonizing operational manifolds with the Mapper algorithm. | `when-turbines-look-away-.../code/yaw_mapper.py` |
-| **Fault monitor** | Physics-informed anomaly detection for sub-optimal performance (TDA + PCA baselines; 100% recall configurations in associated content). | `when-topology-detects-turbine-faults-.../code/` (e.g. `turbine_tda_enhanced.py`, `turbine_tda_anomaly.py`) |
-| **Farm coordination** | Analyzes wake propagation and grid feedback using persistent path homology on lead–lag networks. | `the-dance-of-turbines-.../code/farm_coordination.py`, `40_farm_coordination_path_homology_blog_code.py` |
-| **Regime prognostics** | Predicts imminent startups, shutdowns, and ramp events using zigzag persistence and topological precursors. | `seeing-around-corners-.../code/regime_transition.py` |
+| **Fault monitor** | Physics-informed anomaly detection prototype (TDA + PCA; synthetic data only — pending CARE benchmark). | `when-topology-detects-turbine-faults-.../code/` (e.g. `turbine_tda_enhanced.py`, `turbine_tda_anomaly.py`) |
+| **Farm coordination** | Lead–lag network features for coordinated turbine response (NetworkX statistics; not yet path homology). | `the-dance-of-turbines-.../code/farm_coordination.py`, `40_farm_coordination_path_homology_blog_code.py` |
+| **Regime prognostics** | Regime-transition prototype using sliding-window persistence (not yet zigzag). | `seeing-around-corners-.../code/regime_transition.py` |
 | **Wake topology** | Quantifies wake-induced hysteresis in the power–windspeed phase space and classifies wake vs free-stream operation. | `the-hidden-structure-of-wakes/code/turbine_wake_detection.py` |
 
 Each module is self-contained and includes or references a simulation environment; several use **NREL Wind Toolkit** data (see [Data](#data)).
@@ -99,6 +101,10 @@ Several modules use or simulate data compatible with the **NREL Wind Toolkit** (
 ```
 Topological-Wind-Engineering/
 ├── README.md
+├── SYNTHETIC_RESULTS.md  # Disclaimer: archived metrics are synthetic
+├── MANUSCRIPT_STATUS.md  # Frozen manuscript branches and active roadmap
+├── tda_utils.py      # Shared plotting and simulation helpers
+├── LICENSE
 ├── pyproject.toml    # Project metadata and dependencies (uv/pip)
 ├── uv.lock           # Lockfile for reproducible installs (uv lock)
 ├── requirements.txt  # Fallback for pip install
@@ -149,6 +155,34 @@ If you use this library in academic work, please cite the repository and the rel
 See the [LICENSE](LICENSE) file in this repository.
 
 ---
+
+## CARE benchmark (Phase 1)
+
+Real-data evaluation on the [CARE to Compare](https://zenodo.org/records/15846963) SCADA benchmark with leave-one-turbine-out splits and six model families.
+
+```bash
+# Optional: download full dataset (~5.5 GB)
+python care_benchmark/download.py
+
+# Run benchmark (uses synthetic fallback if data absent)
+python care_benchmark/run_benchmark.py
+
+# Quick dev run on synthetic data with fewer events
+python care_benchmark/run_benchmark.py --config config/care_quick.yaml
+```
+
+Results are written to `care_benchmark/results/benchmark_table.csv`.
+
+See [MANUSCRIPT_STATUS.md](MANUSCRIPT_STATUS.md) for evaluation protocol and decision criteria.
+
+---
+
+## Testing
+
+```bash
+uv sync --extra dev
+uv run pytest
+```
 
 ## Contributing
 

@@ -3,6 +3,7 @@ name = "topological-wind-engineering"
 version = "0.1.0"
 description = "TDA tools for wind energy: persistent homology, Mapper, path homology for monitoring and prediction"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.8"
 dependencies = [
     "pyyaml>=6.0",
@@ -21,4 +22,11 @@ dependencies = [
 nrel = [
     "openoa[examples]>=2.2.0",
 ]
+dev = [
+    "pytest>=7.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
 

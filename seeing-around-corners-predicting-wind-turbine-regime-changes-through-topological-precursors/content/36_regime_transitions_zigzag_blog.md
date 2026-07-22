@@ -1,3 +1,6 @@
+> **Archived prototype (synthetic data only).** This manuscript is frozen pending a real-data CARE benchmark. Reported metrics are from simulated experiments and must not be cited as field performance. See [SYNTHETIC_RESULTS.md](../../SYNTHETIC_RESULTS.md) and [MANUSCRIPT_STATUS.md](../../MANUSCRIPT_STATUS.md).
+>
+
 # Seeing Around Corners: Predicting Wind Turbine Regime Changes Through Topological Precursors
 
 Wind turbines do not transition gently between operating states. They idle at low wind speeds with rotors stationary or freewheeling. When wind reaches three meters per second, startup sequences engage—pitch angles adjust, yaw systems align, and rotors begin spinning under generator torque. As wind increases further, turbines ramp through variable-speed operation until reaching rated wind speed at twelve meters per second, where they generate full power. When wind exceeds twenty-five meters per second, emergency shutdowns activate to prevent structural damage.
@@ -6,7 +9,7 @@ These transitions impose mechanical stress. Startup cycles fatigue drivetrain co
 
 The critical insight is that transitions do not occur instantaneously when wind crosses a threshold. The atmosphere is not a switch. Wind speed approaches transition points gradually, often hesitating—rising toward the threshold, falling back, rising again—as turbulent gusts and lulls overlay the mean trend. During these approach periods, before the transition actually occurs, the system's behavior contains information about what is coming. The topology of operational state space changes as the system approaches a bifurcation point.
 
-This article demonstrates how zigzag persistence, an advanced topological technique that tracks how structure evolves bidirectionally through time, can detect these precursor patterns ten to fifteen minutes before regime transitions occur. By analyzing the rate of topological change and the entropy of persistence diagrams in sliding windows, we predict transitions with seventy-nine percent accuracy, providing sufficient lead time for control systems to prepare gentler transition strategies that reduce wear and extend component life.
+This article describes a **prototype** that uses sliding-window ordinary persistence (not zigzag homology) on **hourly** simulated data. Earlier drafts incorrectly described ten-to-fifteen-minute lead times; window parameters are in sample counts (~hours at the current resolution). Reported accuracy figures are synthetic and archived.
 
 ## The Physics of Hesitation
 

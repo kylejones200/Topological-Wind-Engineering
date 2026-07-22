@@ -1,3 +1,6 @@
+> **Archived prototype (synthetic data only).** This manuscript is frozen pending a real-data CARE benchmark. Reported metrics are from simulated experiments and must not be cited as field performance. See [SYNTHETIC_RESULTS.md](../../SYNTHETIC_RESULTS.md) and [MANUSCRIPT_STATUS.md](../../MANUSCRIPT_STATUS.md).
+>
+
 # The Texture of Wind: Machine Learning on Topological Images to Classify Turbulence
 
 Turbulence intensity defines how much wind speed fluctuates around its mean. In wind energy, turbulence intensity is not a curiosity—it directly determines structural loads and fatigue life. A turbine operating in ten-percent turbulence intensity experiences baseline structural loads. At twenty-percent turbulence, those loads increase by thirty to fifty percent. Over twenty years, high turbulence can reduce component life by decades or force premature replacement of blades, drivetrains, and towers.

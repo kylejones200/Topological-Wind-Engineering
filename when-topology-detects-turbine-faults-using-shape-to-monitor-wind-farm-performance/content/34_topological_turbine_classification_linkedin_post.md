@@ -1,3 +1,6 @@
+> **Archived prototype (synthetic data only).** This manuscript is frozen pending a real-data CARE benchmark. Reported metrics are from simulated experiments and must not be cited as field performance. See [SYNTHETIC_RESULTS.md](../../SYNTHETIC_RESULTS.md) and [MANUSCRIPT_STATUS.md](../../MANUSCRIPT_STATUS.md).
+>
+
 # When Topology Detects What Thresholds Miss: Wind Turbine Fault Detection Using Shape
 
 Traditional wind turbine monitoring watches individual sensors: *Is power too low? Is rotor speed abnormal?* But what if everything looks acceptable—yet the turbine is quietly underperforming?

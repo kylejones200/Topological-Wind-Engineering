@@ -1,3 +1,6 @@
+> **Archived prototype (synthetic data only).** This manuscript is frozen pending a real-data CARE benchmark. Reported metrics are from simulated experiments and must not be cited as field performance. See [SYNTHETIC_RESULTS.md](../../SYNTHETIC_RESULTS.md) and [MANUSCRIPT_STATUS.md](../../MANUSCRIPT_STATUS.md).
+>
+
 # Topological Data Analysis for Wind Turbine Operating State Classification: A Persistent Homology Approach
 
 **Kyle Jones**
@@ -30,13 +33,13 @@ Machine learning has shown promise for turbine condition monitoring [4], fault d
 
 Topological data analysis (TDA) offers a mathematical framework for quantifying the "shape" of data—connected components, loops, voids—that persists across multiple scales [7]. The central tool of TDA, persistent homology, tracks topological features as a filtration parameter increases, producing persistence diagrams that encode multi-scale structure [8]. Features with long persistence represent robust structure, while short-lived features reflect noise.
 
-TDA has found applications in diverse domains including materials science [9], neuroscience [10], and financial time series [11]. However, its application to renewable energy systems remains limited. Recent work has explored TDA for fault detection in mechanical systems [12] and anomaly detection in power grids [13], but to our knowledge, this is the first application of persistent homology to wind turbine operating state classification.
+TDA has found applications in diverse domains including materials science [9], neuroscience [10], and financial time series [11]. Prior work has applied persistent homology to wind-turbine condition monitoring on real gearbox vibration data [14]. This archived prototype explores whether similar topological features can be extracted from simulated SCADA-like trajectories built on NREL atmospheric inputs.
 
 ### C. Contributions
 
 This paper makes the following contributions:
 
-1. **Novel Application:** We demonstrate the first application of persistent homology to wind turbine SCADA data classification, using authentic atmospheric data from NREL's Wind Toolkit.
+1. **Exploratory prototype:** We apply persistent homology to simulated turbine trajectories built on authentic atmospheric data from NREL's Wind Toolkit.
 
 2. **Methodological Rigor:** We implement leak-safe temporal validation through purged forward cross-validation, addressing a common pitfall in time-series machine learning.
 

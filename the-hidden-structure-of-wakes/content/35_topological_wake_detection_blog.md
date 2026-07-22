@@ -1,3 +1,6 @@
+> **Archived prototype (synthetic data only).** This manuscript is frozen pending a real-data CARE benchmark. Reported metrics are from simulated experiments and must not be cited as field performance. See [SYNTHETIC_RESULTS.md](../../SYNTHETIC_RESULTS.md) and [MANUSCRIPT_STATUS.md](../../MANUSCRIPT_STATUS.md).
+>
+
 How Topology Data Analysis Reveals Wake Interactions in Wind Farms
 
 Wind farms extract energy from the atmosphere, but turbines do not operate in isolation. Each rotating blade creates a wake—a downstream region where wind speed drops by twenty to forty percent and turbulence intensity more than doubles. Turbines positioned in these wakes suffer reduced power output and increased fatigue loading. The wake effect is not subtle. A turbine operating in a full wake can lose thirty percent of its potential generation. Over a twenty-year lifespan, this represents millions of dollars in lost revenue per turbine.

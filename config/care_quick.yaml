@@ -1,0 +1,22 @@
+# Quick CARE benchmark config (synthetic or subset)
+global:
+  random_seed: 42
+
+care:
+  data_root: "data/care/CARE_To_Compare"
+  wind_farm: "A"
+  window_size: 36
+  stride: 6
+  criticality_threshold: 12
+  bootstrap_samples: 50
+  max_events: 6
+  allow_synthetic_fallback: true
+  results_dir: "care_benchmark/results"
+  model_families:
+    - statistical
+    - tda_only
+    - tda_plus_conventional
+
+regime_tda:
+  win_size: 256
+  figures_subdir: "figures"

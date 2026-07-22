@@ -1,7 +1,11 @@
 """
-Regime Transition Prediction Using Zigzag Persistence
-Predicts wind turbine regime changes 10-15 minutes ahead using topological precursors.
-Run from repo root: python path/to/regime_transition.py [--config path/to/config.yaml]
+Regime Transition Prediction (prototype)
+
+Sliding-window ordinary persistence features for regime-transition prediction.
+Uses hourly NREL atmospheric data with simulated turbine response.
+
+Note: This is not a zigzag persistence implementation. Window parameters are
+specified in sample counts (row indices), not minutes. See config/default.yaml.
 """
 import sys
 import os
@@ -138,13 +142,13 @@ def simulate_turbine_operation(wind_df, cfg):
     df['regime'] = regime
     return df
 
-def detect_transitions(df, min_duration=10):
+def detect_transitions(df, min_duration_samples=10):
     """
     Detect regime transitions.
-    
+
     Args:
         df: DataFrame with regime labels
-        min_duration: Minimum duration in samples for stable regime
+        min_duration_samples: Minimum consecutive samples for a stable regime
     
     Returns:
         List of (index, from_regime, to_regime) tuples
@@ -152,45 +156,53 @@ def detect_transitions(df, min_duration=10):
     regime = df['regime'].values
     transitions = []
     i = 0
-    while i < len(regime) - min_duration:
+    while i < len(regime) - min_duration_samples:
         current_regime = regime[i]
         for j in range(i + 1, min(i + 60, len(regime))):
             if regime[j] != current_regime:
                 new_regime = regime[j]
-                if j + min_duration < len(regime):
-                    if np.all(regime[j:j + min_duration] == new_regime):
+                if j + min_duration_samples < len(regime):
+                    if np.all(regime[j:j + min_duration_samples] == new_regime):
                         transitions.append((j, current_regime, new_regime))
-                        i = j + min_duration
+                        i = j + min_duration_samples
                         break
         else:
             i += 1
     return transitions
 
-def extract_zigzag_window(df, transition_idx, window_minutes=30, subwindow_minutes=5):
+def extract_zigzag_window(
+    df,
+    transition_idx,
+    window_samples=30,
+    subwindow_samples=5,
+    slide_samples=1,
+    lead_samples=15,
+):
     """
-    Extract feature window before transition using overlapping subwindows.
-    
+    Extract feature windows before a transition using overlapping subwindows.
+
     Args:
         df: DataFrame
         transition_idx: Index where transition occurs
-        window_minutes: Total window duration before transition
-        subwindow_minutes: Each subwindow duration
+        window_samples: Total lookback in samples (rows) before lead offset
+        subwindow_samples: Subwindow length in samples
+        slide_samples: Step between subwindows in samples
+        lead_samples: Samples before transition_idx where the window ends
     
     Returns:
         List of subwindow DataFrames
     """
-    end_idx = max(0, transition_idx - 15)
-    start_idx = max(0, end_idx - window_minutes)
-    if start_idx >= end_idx - subwindow_minutes:
+    end_idx = max(0, transition_idx - lead_samples)
+    start_idx = max(0, end_idx - window_samples)
+    if start_idx >= end_idx - subwindow_samples:
         return None
     subwindows = []
-    slide_minutes = 0.5
     current = start_idx
-    while current + subwindow_minutes <= end_idx:
-        subwin = df.iloc[int(current):int(current + subwindow_minutes)].copy()
-        if len(subwin) >= subwindow_minutes * 0.8:
+    while current + subwindow_samples <= end_idx:
+        subwin = df.iloc[int(current):int(current + subwindow_samples)].copy()
+        if len(subwin) >= subwindow_samples * 0.8:
             subwindows.append(subwin)
-        current += slide_minutes
+        current += slide_samples
     return subwindows if len(subwindows) > 10 else None
 
 def compute_persistence_for_subwindow(subwin):
@@ -281,7 +293,7 @@ def extract_zigzag_features(subwindows):
     features['power_std'] = np.std(all_power)
     return features
 
-def create_dataset(df, transitions, n_negative_samples=None):
+def create_dataset(df, transitions, n_negative_samples=None, window_cfg=None):
     """
     Create dataset with positive (pre-transition) and negative (stable) windows.
     
@@ -293,10 +305,22 @@ def create_dataset(df, transitions, n_negative_samples=None):
     Returns:
         X (features), y (labels)
     """
+    window_cfg = window_cfg or {}
+    window_samples = window_cfg.get("window_samples", 30)
+    subwindow_samples = window_cfg.get("subwindow_samples", 5)
+    slide_samples = window_cfg.get("slide_samples", 1)
+    lead_samples = window_cfg.get("lead_samples", 15)
     logger.info('\n   Creating dataset...')
     positive_features = []
     for trans_idx, from_regime, to_regime in transitions:
-        subwindows = extract_zigzag_window(df, trans_idx, window_minutes=30, subwindow_minutes=5)
+        subwindows = extract_zigzag_window(
+            df,
+            trans_idx,
+            window_samples=window_samples,
+            subwindow_samples=subwindow_samples,
+            slide_samples=slide_samples,
+            lead_samples=lead_samples,
+        )
         if subwindows is not None:
             features = extract_zigzag_features(subwindows)
             positive_features.append(features)
@@ -312,7 +336,14 @@ def create_dataset(df, transitions, n_negative_samples=None):
         future_window = df.iloc[start_idx:start_idx + 60]
         if future_window['regime'].nunique() > 1:
             continue
-        subwindows = extract_zigzag_window(df, start_idx + 45, window_minutes=30, subwindow_minutes=5)
+        subwindows = extract_zigzag_window(
+            df,
+            start_idx + 45,
+            window_samples=window_samples,
+            subwindow_samples=subwindow_samples,
+            slide_samples=slide_samples,
+            lead_samples=lead_samples,
+        )
         if subwindows is not None:
             features = extract_zigzag_features(subwindows)
             negative_features.append(features)
@@ -363,7 +394,7 @@ REGIME_NAMES = ['Idle', 'Startup', 'Ramp-up', 'Rated', 'Shutdown']
 def _log_banner():
     """Log pipeline header."""
     logger.info("=" * 70)
-    logger.info("Regime Transition Prediction Using Zigzag Persistence")
+    logger.info("Regime Transition Prediction (sliding-window persistence prototype)")
     logger.info("=" * 70)
 
 
@@ -388,10 +419,12 @@ def _simulate_and_log_regimes(wind_data, cfg):
     return df
 
 
-def _detect_and_log_transitions(df):
+def _detect_and_log_transitions(df, cfg):
     """Detect regime transitions and log counts by type. Returns list of transitions."""
     logger.info('\n3. Detecting regime transitions...')
-    transitions = detect_transitions(df, min_duration=10)
+    rt_cfg = cfg.get("regime_transition", {})
+    min_duration = rt_cfg.get("min_regime_duration_samples", 10)
+    transitions = detect_transitions(df, min_duration_samples=min_duration)
     logger.info(f'   Found {len(transitions)} transitions')
     transition_types = {}
     for _, from_r, to_r in transitions:
@@ -403,10 +436,16 @@ def _detect_and_log_transitions(df):
     return transitions
 
 
-def _build_dataset_and_log(df, transitions):
-    """Build zigzag-feature dataset and log shape/labels. Returns (X, y, feature_names)."""
-    logger.info('\n4. Creating dataset with zigzag persistence features...')
-    X, y, feature_names = create_dataset(df, transitions, n_negative_samples=len(transitions) * 2)
+def _build_dataset_and_log(df, transitions, cfg):
+    """Build persistence-feature dataset and log shape/labels. Returns (X, y, feature_names)."""
+    logger.info('\n4. Creating dataset with sliding-window persistence features...')
+    rt_cfg = cfg.get("regime_transition", {})
+    X, y, feature_names = create_dataset(
+        df,
+        transitions,
+        n_negative_samples=len(transitions) * 2,
+        window_cfg=rt_cfg,
+    )
     logger.info(f'   Dataset shape: {X.shape}')
     logger.info(f'   Transitions (positive): {(y == 1).sum()} ({(y == 1).mean() * 100:.1f}%)')
     logger.info(f'   Stable (negative): {(y == 0).sum()} ({(y == 0).mean() * 100:.1f}%)')
@@ -472,19 +511,23 @@ def _log_feature_importance_and_save_viz(results, feature_names, X_test_scaled, 
     )
 
 
-def _log_final_summary(results):
+def _log_final_summary(results, cfg):
     """Log completion banner and best model summary."""
+    rt_cfg = cfg.get("regime_transition", {})
+    interval_h = float(rt_cfg.get("sample_interval_hours", 1.0))
+    lead_samples = int(rt_cfg.get("lead_samples", 15))
+    lead_hours = lead_samples * interval_h
     logger.info('\n' + '=' * 70)
-    logger.info('TRANSITION PREDICTION COMPLETE')
+    logger.info('TRANSITION PREDICTION COMPLETE (synthetic prototype)')
     logger.info('=' * 70)
     logger.info(f'\nBest model: Random Forest')
     logger.info(f"AUC: {results['Random Forest']['auc']:.3f}")
     logger.info(f"Accuracy: {results['Random Forest']['accuracy']:.3f}")
-    logger.info(f'\nLead time: 15-20 minutes before transition')
-    logger.info(f'Zigzag persistence captures approach dynamics through:')
-    logger.info(f'  - Increasing topology entropy (exploration)')
-    logger.info(f'  - Spiking bottleneck distances (reorganization)')
-    logger.info(f'  - Rising H1 counts (state space expansion)')
+    logger.info(
+        f'Configured lead offset: {lead_samples} samples '
+        f'(~{lead_hours:.1f} h at {interval_h:g}-h sampling)'
+    )
+    logger.info('Note: archived metrics are synthetic; see SYNTHETIC_RESULTS.md')
     logger.info('=' * 70)
 
 
@@ -504,12 +547,12 @@ def main(config_path=None):
     if wind_data is None:
         return
     df = _simulate_and_log_regimes(wind_data, cfg)
-    transitions = _detect_and_log_transitions(df)
-    X, y, feature_names = _build_dataset_and_log(df, transitions)
+    transitions = _detect_and_log_transitions(df, cfg)
+    X, y, feature_names = _build_dataset_and_log(df, transitions, cfg)
     X_train_scaled, X_test_scaled, y_train, y_test = _stratified_split_and_scale(X, y, seed, train_ratio)
     results = _train_classifiers(X_train_scaled, y_train, X_test_scaled, y_test, seed, n_est)
     _log_feature_importance_and_save_viz(results, feature_names, X_test_scaled, y_test, out_dir)
-    _log_final_summary(results)
+    _log_final_summary(results, cfg)
 
 
 if __name__ == "__main__":

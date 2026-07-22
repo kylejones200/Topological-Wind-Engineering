@@ -1,3 +1,6 @@
+> **Archived prototype (synthetic data only).** This manuscript is frozen pending a real-data CARE benchmark. Reported metrics are from simulated experiments and must not be cited as field performance. See [SYNTHETIC_RESULTS.md](../../SYNTHETIC_RESULTS.md) and [MANUSCRIPT_STATUS.md](../../MANUSCRIPT_STATUS.md).
+>
+
 # When Turbines Look Away: Using Mapper to Detect Yaw Misalignment from Operational Patterns
 
 Wind turbines must face the wind to capture energy efficiently. The yaw system rotates the nacelle atop the tower to keep the rotor perpendicular to the wind direction. A wind vane mounted on the nacelle measures wind direction, and the controller commands yaw motors to adjust the turbine's heading. In ideal conditions, the rotor plane aligns perfectly with the wind, maximizing the swept area that intercepts the flow.
@@ -66,7 +69,7 @@ Comparing Mapper-based classification to traditional machine learning on the sam
 
 Ablation studies confirm both filters contribute. Using only power ratio yields eighty-seven percent accuracy—good but missing information from variability patterns. Using only rotor speed variability yields seventy-nine percent accuracy—variability alone is less discriminative because turbulence also increases variability. Using both filters with Mapper captures the joint pattern where misalignment creates power deficit and variability together, a combination rarely seen in aligned operation even during turbulent conditions.
 
-The method generalizes across turbines. Training the Mapper graph on two turbines and testing on the held-out third turbine achieves eighty-eight percent accuracy, only four points below the ninety-two percent achieved when training and testing on the same turbines with temporal splits. This suggests the behavioral signatures of misalignment are turbine-independent, determined more by aerodynamic physics than by specific turbine models or control systems. Transfer learning is feasible—a graph trained on one wind farm can detect misalignment at another with minimal site-specific calibration.
+Cross-turbine generalization has **not** been implemented in code. Reported hold-out-turbine accuracy numbers in earlier drafts were unsupported and are removed pending leave-one-turbine-out evaluation on real SCADA data.
 
 ## Temporal Patterns and Maintenance
 

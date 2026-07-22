@@ -59,6 +59,12 @@ def _default_config() -> Dict[str, Any]:
         "wake_detection": {"figures_subdir": "figures_wake"},
         "yaw_mapper": {"figures_subdir": "figures_yaw", "window_size": 10},
         "regime_tda": {"figures_subdir": "figures"},
+        "care": {
+            "data_root": "data/care/CARE_To_Compare",
+            "wind_farm": "A",
+            "allow_synthetic_fallback": True,
+            "results_dir": "care_benchmark/results",
+        },
     }
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:

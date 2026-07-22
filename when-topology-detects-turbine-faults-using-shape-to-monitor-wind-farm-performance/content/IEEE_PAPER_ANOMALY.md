@@ -1,3 +1,6 @@
+> **Archived prototype (synthetic data only).** This manuscript is frozen pending a real-data CARE benchmark. Reported metrics are from simulated experiments and must not be cited as field performance. See [SYNTHETIC_RESULTS.md](../../SYNTHETIC_RESULTS.md) and [MANUSCRIPT_STATUS.md](../../MANUSCRIPT_STATUS.md).
+>
+
 # Topological Fault Detection in Wind Turbines: A Physics-Informed Persistent Homology Approach
 
 **Kyle Jones**  
@@ -14,7 +17,7 @@
 
 **Results:** The combined topological and geometric feature approach achieved 95.0% accuracy, F1 score of 0.974, and 100% recall in detecting performance anomalies using Random Forest classification (AUC = 0.825). Topological features alone achieved competitive performance (AUC = 0.807, 100% recall), demonstrating that persistent homology captures fault-indicative behavioral patterns that complement geometric features. Feature importance analysis revealed that H1 (loop) maximum lifetime and principal component statistics both contribute significantly to fault discrimination.
 
-**Conclusion:** TDA provides interpretable, physics-informed features for operational anomaly detection in wind turbines. By framing the problem as behavioral deviation from expected performance rather than direct power prediction, we avoid circular reasoning while achieving excellent detection capabilities. The 100% recall with only 5% false alarm rate makes this approach suitable for real-world maintenance scheduling. This methodology extends to any asset monitoring application where physics-based expectations exist and faults manifest as altered multivariate behavioral patterns.
+**Conclusion:** TDA provides interpretable, physics-informed features for operational anomaly detection in simulated wind-turbine trajectories. The archived experiment uses severe class imbalance (98/4 windows) and matches a trivial majority-class baseline; these results are not validated for deployment. A rigorous CARE-benchmark evaluation with turbine-level holdout is required before any performance claim.
 
 **Index Terms:** Topological data analysis, persistent homology, wind energy, fault detection, anomaly detection, condition monitoring, SCADA systems, time series analysis
 

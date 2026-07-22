@@ -1,0 +1,25 @@
+# Full CARE benchmark on real data (Farm A, all six families)
+global:
+  random_seed: 42
+
+care:
+  data_root: "data/care/CARE_To_Compare"
+  wind_farm: "A"
+  window_size: 144
+  stride: 6
+  criticality_threshold: 72
+  bootstrap_samples: 200
+  max_events: null
+  allow_synthetic_fallback: false
+  results_dir: "care_benchmark/results"
+  model_families:
+    - power_curve_residual
+    - statistical
+    - spectral
+    - isolation_forest
+    - tda_only
+    - tda_plus_conventional
+
+regime_tda:
+  win_size: 256
+  figures_subdir: "figures"
